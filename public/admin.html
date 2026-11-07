@@ -25,21 +25,23 @@
         <button class="primary-button" id="loginButton" type="submit">دخول لوحة الإدارة <span>←</span></button>
       </form>
       <div class="login-error" id="loginError" role="alert"></div>
-      <div class="login-footnote">لا يوجد إنشاء حساب من هذه الصفحة. أضف المسؤولين يدويًا إلى مجموعة admins في Firestore.</div>
+      <div class="login-footnote">حساب المالك يُضاف مرة واحدة إلى مجموعة admins في Firestore. يمكن للمالك إنشاء حسابات الموظفين وإدارة صلاحياتهم من اللوحة.</div>
     </div>
   </section>
 
   <div class="admin-app" id="adminApp" hidden>
     <aside class="sidebar" id="sidebar">
       <a class="admin-brand" href="./"><img src="./assets/techbuilders-logo.jpg" alt=""><span><b>TECHBUILDERS</b><small>RESTAURANT CONTROL</small></span></a>
-      <div class="sidebar-user"><div class="user-avatar">TB</div><span><b id="adminEmailLabel">المسؤول</b><small>ADMINISTRATOR</small></span></div>
+      <div class="sidebar-user"><div class="user-avatar">TB</div><span><b id="adminEmailLabel">المسؤول</b><small id="roleLabel">OWNER / ADMIN</small></span></div>
       <nav class="side-nav" id="sideNav">
         <button class="active" data-panel="overview"><i>◫</i>نظرة عامة</button>
         <button data-panel="groups"><i>▤</i>الأقسام الرئيسية</button>
         <button data-panel="categories"><i>☷</i>التصنيفات الفرعية</button>
         <button data-panel="items"><i>✦</i>الوجبات والأصناف</button>
-        <button data-panel="orders"><i>▧</i>الطلبات <b id="pendingCount">0</b></button>
-        <button data-panel="settings"><i>⚙</i>إعدادات المطعم</button>
+        <button data-panel="orders"><i>▧</i>الطلبات النشطة <b id="pendingCount">0</b></button>
+        <button data-panel="archive"><i>▤</i>أرشيف الطلبات</button>
+        <button data-panel="staff" data-owner-only><i>♙</i>إدارة الموظفين</button>
+        <button data-panel="settings" data-owner-only><i>⚙</i>إعدادات المطعم</button>
       </nav>
       <div class="sidebar-bottom"><a href="./" target="_blank">فتح المنيو ↗</a><button id="logoutButton">تسجيل الخروج</button></div>
     </aside>
@@ -60,29 +62,60 @@
           <article><span>طلبات قيد الانتظار</span><b id="statPending">0</b><small>تحتاج متابعة</small></article>
         </div>
         <div class="content-card"><div class="card-heading"><div><span>RECENT ACTIVITY</span><h3>أحدث الطلبات</h3></div><button class="text-button" data-goto="orders">كل الطلبات ←</button></div><div id="recentOrders" class="orders-list compact-list"></div></div>
-        <div class="quick-grid"><button data-goto="groups"><b>＋</b><strong>إضافة قسم رئيسي</strong><small>مثال: المأكولات والمشروبات</small></button><button data-goto="categories"><b>＋</b><strong>إضافة تصنيف فرعي</strong><small>اربط التصنيف بقسم رئيسي</small></button><button data-goto="items"><b>＋</b><strong>إضافة وجبة</strong><small>اسم وصورة ومكونات وسعر</small></button></div>
+        <div class="quick-grid" data-owner-only><button data-goto="groups"><b>＋</b><strong>إضافة قسم رئيسي</strong><small>مثال: المأكولات والمشروبات</small></button><button data-goto="categories"><b>＋</b><strong>إضافة تصنيف فرعي</strong><small>اربط التصنيف بقسم رئيسي</small></button><button data-goto="items"><b>＋</b><strong>إضافة وجبة</strong><small>اسم وصورة ومكونات وسعر</small></button></div>
       </section>
 
       <section class="panel" id="panel-groups">
-        <div class="panel-heading"><div><span>MENU STRUCTURE / LEVEL 01</span><h3>الأقسام الرئيسية</h3><p>تظهر كعناوين رئيسية أعلى صفحات كتاب المنيو.</p></div><button class="primary-button small" id="addGroup">＋ إضافة قسم</button></div>
+        <div class="panel-heading"><div><span>MENU STRUCTURE / LEVEL 01</span><h3>الأقسام الرئيسية</h3><p>تظهر كعناوين رئيسية أعلى صفحات كتاب المنيو.</p></div><button class="primary-button small" id="addGroup" data-owner-only>＋ إضافة قسم</button></div>
         <div id="groupsList" class="entity-list"></div>
       </section>
 
       <section class="panel" id="panel-categories">
-        <div class="panel-heading"><div><span>MENU STRUCTURE / LEVEL 02</span><h3>التصنيفات الفرعية</h3><p>كل تصنيف فرعي يتبع قسمًا رئيسيًا محددًا.</p></div><button class="primary-button small" id="addCategory">＋ إضافة تصنيف</button></div>
+        <div class="panel-heading"><div><span>MENU STRUCTURE / LEVEL 02</span><h3>التصنيفات الفرعية</h3><p>كل تصنيف فرعي يتبع قسمًا رئيسيًا محددًا.</p></div><button class="primary-button small" id="addCategory" data-owner-only>＋ إضافة تصنيف</button></div>
         <div id="categoriesList" class="entity-list"></div>
       </section>
 
       <section class="panel" id="panel-items">
-        <div class="panel-heading"><div><span>MENU CONTENT</span><h3>الوجبات والأصناف</h3><p>أضف صورة الوجبة كرابط مباشر، واكتب الوصف والمكونات والسعر.</p></div><button class="primary-button small" id="addItem">＋ إضافة وجبة</button></div>
+        <div class="panel-heading"><div><span>MENU CONTENT</span><h3>الوجبات والأصناف</h3><p>أضف صورة الوجبة كرابط مباشر، واكتب الوصف والمكونات والسعر.</p></div><button class="primary-button small" id="addItem" data-owner-only>＋ إضافة وجبة</button></div>
         <div class="toolbar"><input id="itemSearch" type="search" placeholder="ابحث باسم الوجبة..."><select id="itemCategoryFilter"><option value="all">كل التصنيفات</option></select></div>
         <div id="itemsList" class="entity-list"></div>
       </section>
 
       <section class="panel" id="panel-orders">
         <div class="panel-heading"><div><span>LIVE ORDERS</span><h3>طلبات العملاء</h3><p>تصل الطلبات الجديدة تلقائيًا عند تسجيلها في Firestore.</p></div><button class="outline-button small" id="refreshOrders">↻ تحديث</button></div>
-        <div class="toolbar"><select id="orderFilter"><option value="all">كل الحالات</option><option value="pending">قيد الانتظار</option><option value="accepted">تم القبول</option><option value="preparing">قيد التحضير</option><option value="ready">جاهز</option><option value="completed">مكتمل</option><option value="cancelled">ملغي</option></select></div>
+        <div class="toolbar"><select id="orderFilter"><option value="all">كل الطلبات النشطة</option><option value="pending">قيد الانتظار</option><option value="accepted">تم القبول</option><option value="preparing">قيد التحضير</option><option value="ready">جاهز</option><option value="cancelled">ملغي</option></select></div>
         <div id="ordersList" class="orders-list"></div>
+      </section>
+
+      <section class="panel" id="panel-archive">
+        <div class="panel-heading"><div><span>COMPLETED ORDERS / ARCHIVE</span><h3>أرشيف الطلبات المكتملة</h3><p>يُحفظ آخر 10 طلبات مكتملة فقط، ويمكن البحث برقم الطلب أو التاريخ.</p></div><button class="outline-button small" id="refreshArchive">↻ تحديث</button></div>
+        <div class="toolbar archive-toolbar"><input id="archiveSearch" type="search" placeholder="ابحث برقم الطلب مثل 26-11-07-1"><input id="archiveDate" type="date"><span id="archiveCount" class="help-note">0 طلب</span></div>
+        <div id="archiveList" class="orders-list"></div>
+        <div class="archive-pagination"><button class="outline-button small" id="archivePrev" disabled>السابق</button><span id="archivePageLabel">1 / 1</span><button class="outline-button small" id="archiveNext" disabled>التالي</button></div>
+      </section>
+
+      <section class="panel" id="panel-staff">
+        <div class="panel-heading"><div><span>STAFF ACCESS CONTROL</span><h3>إدارة الموظفين</h3><p>أنشئ حسابًا مستقلًا لكل موظف، وحدد الأقسام التي يمكنه عرضها. يمكن منحه قراءة المنيو فقط دون إضافة أو تعديل أو حذف، ولا يمكنه تغيير الإعدادات.</p></div></div>
+        <div class="settings-grid">
+          <form class="content-card settings-form" id="staffForm">
+            <div class="card-heading"><div><span>CREATE EMPLOYEE</span><h3>إنشاء حساب موظف</h3></div></div>
+            <label>البريد الإلكتروني<input id="staffEmail" type="email" required autocomplete="off" placeholder="employee@example.com" dir="ltr"></label>
+            <label>كلمة المرور<input id="staffPassword" type="password" minlength="6" required autocomplete="new-password" placeholder="6 أحرف على الأقل"></label>
+            <div class="staff-permissions">
+              <b>الأقسام المسموح بها</b>
+              <label><input type="checkbox" id="staffAllPermissions"> تحديد الكل</label>
+              <label><input type="checkbox" data-staff-permission value="overview"> نظرة عامة</label>
+              <label><input type="checkbox" data-staff-permission value="groups"> الأقسام الرئيسية (عرض فقط)</label>
+              <label><input type="checkbox" data-staff-permission value="categories"> التصنيفات الفرعية (عرض فقط)</label>
+              <label><input type="checkbox" data-staff-permission value="items"> الوجبات والأصناف (عرض فقط)</label>
+              <label><input type="checkbox" data-staff-permission value="orders" checked> الطلبات النشطة (عرض وتحديث الحالة)</label>
+              <label><input type="checkbox" data-staff-permission value="archive"> أرشيف الطلبات</label>
+            </div>
+            <button class="primary-button" id="createStaffButton" type="submit">إنشاء حساب الموظف</button>
+            <div class="form-message" id="staffMessage"></div>
+          </form>
+          <div class="content-card"><div class="card-heading"><div><span>STAFF ACCOUNTS</span><h3>الحسابات المضافة</h3></div></div><div id="staffList" class="entity-list"></div></div>
+        </div>
       </section>
 
       <section class="panel" id="panel-settings">
@@ -92,7 +125,25 @@
             <div class="card-heading"><div><span>GENERAL</span><h3>المعلومات الأساسية</h3></div></div>
             <label>اسم المطعم<input id="settingName" required maxlength="80" value="TECHBUILDERS"></label>
             <label>رسالة أسفل المنيو<textarea id="settingFooter" rows="3" maxlength="250">ننتظركم دائمًا. نتمنى لكم تجربة لذيذة.</textarea></label>
+            <label>رابط الشعار الموحد (HTTPS)<input id="settingLogoUrl" type="url" placeholder="https://.../logo.png"><small class="help-note">ضع رابط صورة مباشرًا؛ سيتم استخدامه في واجهة العميل ولوحة الإدارة وأيقونة الموقع.</small></label>
+            <div class="card-heading theme-heading"><div><span>BRAND COLORS</span><h3>ألوان الواجهة</h3></div></div>
+            <div class="theme-color-grid">
+              <label>اللون الأساسي<input id="themePrimary" type="color" value="#087cf0"></label>
+              <label>اللون المساعد<input id="themeAccent" type="color" value="#42a1ff"></label>
+              <label>خلفية الموقع<input id="themeBackground" type="color" value="#080b10"></label>
+              <label>لون البطاقات<input id="themeSurface" type="color" value="#10151d"></label>
+              <label>سطح ثانوي<input id="themeSurface2" type="color" value="#151c26"></label>
+              <label>لون صفحات المنيو<input id="themePaper" type="color" value="#f3eee4"></label>
+              <label>لون النص على المنيو<input id="themeInk" type="color" value="#20252b"></label>
+              <label>لون النص العام<input id="themeText" type="color" value="#f5f7fa"></label>
+              <label>لون النص الثانوي<input id="themeMuted" type="color" value="#8993a2"></label>
+              <label>لون الحدود<input id="themeBorder" type="color" value="#364454"></label>
+            </div>
+            <div class="card-heading tax-heading"><div><span>TAXES & FEES</span><h3>الضرائب والرسوم</h3></div><button type="button" class="outline-button small" id="addTaxButton">＋ إضافة رسم</button></div>
+            <p class="help-note">كل نسبة تُحسب من مجموع الأصناف، ويمكن تحديد تطبيقها على الطلب المحلي أو السفري أو كليهما.</p>
+            <div id="taxSettingsRows" class="tax-settings-list"></div>
             <div class="form-two"><label>العملة الافتراضية<input id="settingCurrency" maxlength="12" value="ل.س"></label><label>نطاق التحقق بالمتر<input id="settingRadius" type="number" min="25" max="500" value="100" required></label></div>
+            <label>المنطقة الزمنية لترقيم الطلبات<select id="settingTimeZone"><option value="Asia/Damascus">سوريا — Asia/Damascus</option><option value="Asia/Beirut">لبنان — Asia/Beirut</option><option value="Asia/Riyadh">السعودية — Asia/Riyadh</option><option value="Asia/Dubai">الإمارات — Asia/Dubai</option><option value="Asia/Tokyo">اليابان — Asia/Tokyo</option><option value="UTC">UTC</option></select></label>
             <label>عنوان المطعم<input id="settingAddress" maxlength="180" placeholder="المدينة، الشارع، العنوان"></label>
             <div class="form-two"><label>Latitude<input id="settingLat" type="number" step="any" placeholder="33.5138"></label><label>Longitude<input id="settingLng" type="number" step="any" placeholder="36.2765"></label></div>
             <button type="button" class="outline-button full" id="captureLocation">⌖ استخدام موقعي الحالي كنقطة المطعم</button>
@@ -117,6 +168,19 @@
       <div class="admin-toast" id="adminToast" role="status"></div>
     </main>
   </div>
+
+  <dialog id="orderEditDialog" class="entity-dialog order-edit-dialog">
+    <form id="orderEditForm" method="dialog">
+      <div class="dialog-head"><div><span>ORDER EDITOR</span><h3 id="orderEditTitle">تعديل الطلب</h3></div><button type="button" class="dialog-close" id="closeOrderEdit">×</button></div>
+      <div class="dialog-fields">
+        <label>نوع الطلب<select id="orderEditService"><option value="dineIn">محلي</option><option value="takeaway">سفري</option></select></label>
+        <div id="orderEditRows" class="order-edit-rows"></div>
+        <div class="order-add-row"><select id="orderEditAddItem"><option value="">اختر صنفًا لإضافته</option></select><button type="button" class="outline-button" id="addOrderItemButton">إضافة الصنف</button></div>
+        <div id="orderEditMessage" class="form-message"></div>
+      </div>
+      <div class="dialog-actions"><button type="button" class="outline-button" id="cancelOrderEdit">إلغاء</button><button type="submit" class="primary-button" id="saveOrderEdit">حفظ التعديلات</button></div>
+    </form>
+  </dialog>
 
   <dialog id="entityDialog" class="entity-dialog">
     <form id="entityForm" method="dialog">

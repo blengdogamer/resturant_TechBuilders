@@ -1,4 +1,4 @@
-import { auth, db, sdk, isFirebaseConfigured } from './firebase.js';
+import { guestAuth as auth, guestDb as db, sdk, isFirebaseConfigured } from './firebase.js';
 import { TELEGRAM_ENDPOINT } from './telegram-config.js';
 
 const $ = selector => document.querySelector(selector);
@@ -6,7 +6,7 @@ const state = {
   groups: [], categories: [], items: [], settings: {},
   groupId: null, categoryId: null, page: 0, selectedItem: null,
   detailQty: 1, detailNote: '', cart: new Map(),
-  verifiedLocation: null, locationVerifiedUntil: 0
+  verifiedLocation: null, locationVerifiedUntil: 0, serviceType: 'dineIn'
 };
 const PAGE_SIZE = 4;
 
@@ -35,6 +35,47 @@ function showLoadError(message) {
   $('#pageCounter').textContent = '— / —';
 }
 
+function applyBranding(settings = {}) {
+  const theme = settings.theme || {};
+  const root = document.documentElement;
+  const cssMap = {
+    '--blue': theme.primary,
+    '--blue2': theme.accent,
+    '--bg': theme.background,
+    '--panel': theme.surface,
+    '--panel2': theme.surface2,
+    '--paper': theme.paper,
+    '--paper2': theme.paper2,
+    '--ink': theme.ink,
+    '--surface-text': theme.text,
+    '--muted': theme.muted
+  };
+  for (const [property, value] of Object.entries(cssMap)) {
+    if (typeof value === 'string' && /^#[0-9a-f]{6}$/i.test(value)) root.style.setProperty(property, value);
+  }
+  if (typeof theme.border === 'string' && /^#[0-9a-f]{6}$/i.test(theme.border)) root.style.setProperty('--line', `${theme.border}80`);
+  if (theme.background) document.querySelector('meta[name="theme-color"]')?.setAttribute('content', theme.background);
+  const rawLogo = String(settings.logoUrl || '').trim();
+  const logo = rawLogo && (rawLogo.startsWith('https://') || rawLogo.startsWith('./') || rawLogo.startsWith('/')) ? rawLogo : './assets/techbuilders-logo.jpg';
+  document.querySelectorAll('.brand img,.left-page-logo,.footer-brand img').forEach(image => { image.src = logo; });
+  const favicon = document.querySelector('link[rel="icon"]');
+  if (favicon) favicon.href = logo;
+}
+
+function priceBreakdown(subtotal, serviceType = state.serviceType) {
+  const appliesKey = serviceType === 'takeaway' ? 'takeaway' : 'dineIn';
+  const taxes = (Array.isArray(state.settings.taxes) ? state.settings.taxes : [])
+    .filter(tax => tax && tax.enabled !== false && Array.isArray(tax.appliesTo) && tax.appliesTo.includes(appliesKey))
+    .map(tax => ({
+      id: String(tax.id || ''),
+      name: String(tax.name || 'رسوم'),
+      rate: Math.max(0, Number(tax.rate) || 0),
+      amount: Math.round(subtotal * Math.max(0, Number(tax.rate) || 0) / 100)
+    }));
+  const taxTotal = taxes.reduce((sum, tax) => sum + tax.amount, 0);
+  return { subtotal, taxes, taxTotal, total: subtotal + taxTotal };
+}
+
 async function loadRestaurantData() {
   if (!isFirebaseConfigured || !db) {
     showLoadError('يجب وضع إعدادات Firebase في public/js/firebase-config.js ثم نشر الموقع. لا توجد بيانات تجريبية في هذه النسخة.');
@@ -52,6 +93,7 @@ async function loadRestaurantData() {
     state.items = sortByOrder(itemSnap.docs.map(doc => ({ id: doc.id, ...doc.data() })));
     state.settings = settingsSnap.exists() ? settingsSnap.data() : {};
     $('#restaurantName').textContent = state.settings.name || 'TECHBUILDERS';
+    applyBranding(state.settings);
     $('#footerMessage').textContent = state.settings.footerMessage || 'ننتظركم دائمًا. نتمنى لكم تجربة لذيذة.';
     if (!state.groupId || !state.groups.some(group => group.id === state.groupId)) state.groupId = state.groups[0]?.id || null;
     const groupCategories = state.categories.filter(category => category.groupId === state.groupId);
@@ -238,12 +280,22 @@ function updateCartQuantity(id, change) {
 }
 
 function renderCart() {
-  const count = [...state.cart.values()].reduce((sum, line) => sum + line.quantity, 0);
-  const total = [...state.cart.values()].reduce((sum, line) => sum + Number(line.item.price || 0) * line.quantity, 0);
-  const currencies = [...new Set([...state.cart.values()].map(line => line.item.currency || 'ل.س'))];
+  const lines = [...state.cart.values()];
+  const count = lines.reduce((sum, line) => sum + line.quantity, 0);
+  const subtotal = lines.reduce((sum, line) => sum + Number(line.item.price || 0) * line.quantity, 0);
+  const breakdown = priceBreakdown(subtotal);
+  const currencies = [...new Set(lines.map(line => line.item.currency || 'ل.س'))];
+  const currency = currencies.length === 1 ? currencies[0] : '';
   $('#cartCount').textContent = count;
-  $('#cartTotal').textContent = formatMoney(total, currencies.length === 1 ? currencies[0] : '');
+  $('#cartSubtotal').textContent = formatMoney(subtotal, currency);
+  $('#cartTotal').textContent = formatMoney(breakdown.total, currency);
+  $('#cartTaxLines').innerHTML = breakdown.taxes.map(tax => `
+    <div class="tax-row"><span>${escapeHtml(tax.name)} (${tax.rate}%)</span><strong>${formatMoney(tax.amount, currency)}</strong></div>`).join('');
   $('#sendOrder').disabled = count === 0;
+  document.querySelectorAll('[data-service-type]').forEach(button => {
+    button.classList.toggle('active', button.dataset.serviceType === state.serviceType);
+    button.setAttribute('aria-pressed', String(button.dataset.serviceType === state.serviceType));
+  });
   if (!count) {
     $('#cartLines').innerHTML = '<div class="cart-empty"><span>▤</span><b>السلة فارغة</b><p>أضف وجباتك المفضلة من المنيو.</p></div>';
     return;
@@ -258,7 +310,6 @@ function renderCart() {
     </article>`).join('');
   attachImageFallbacks();
 }
-
 function openCart() {
   $('#cartBackdrop').hidden = false;
   requestAnimationFrame(() => $('#cartBackdrop').classList.add('visible'));
@@ -363,11 +414,18 @@ function normalizePhoneDigits(value) {
     .replace(/\D/g, '');
 }
 
-function createOrderNumber() {
-  const date = new Date();
-  const stamp = [date.getFullYear().toString().slice(-2), String(date.getMonth() + 1).padStart(2, '0'), String(date.getDate()).padStart(2, '0')].join('');
-  const suffix = crypto.getRandomValues(new Uint32Array(1))[0].toString(36).slice(-5).toUpperCase();
-  return `TB-${stamp}-${suffix}`;
+function localDayKey(date = new Date()) {
+  const timeZone = state.settings.timeZone || 'Asia/Damascus';
+  const parts = Object.fromEntries(new Intl.DateTimeFormat('en-US', {
+    timeZone, year: 'numeric', month: '2-digit', day: '2-digit'
+  }).formatToParts(date).map(part => [part.type, part.value]));
+  return `${parts.year}-${parts.month}-${parts.day}`;
+}
+
+function displayOrderNumber(dayKey, sequence) {
+  const [, month, day] = dayKey.split('-');
+  const year = dayKey.slice(2, 4);
+  return `${year}-${month}-${day}-${sequence}`;
 }
 
 async function submitOrder() {
@@ -397,21 +455,28 @@ async function submitOrder() {
   }));
   const currencies = [...new Set(lines.map(line => line.currency))];
   if (currencies.length !== 1) return toast('لا يمكن إرسال سلة تحتوي على أكثر من عملة.');
-  const total = lines.reduce((sum, line) => sum + line.subtotal, 0);
-  const orderNumber = createOrderNumber();
+  const subtotal = lines.reduce((sum, line) => sum + line.subtotal, 0);
+  const breakdown = priceBreakdown(subtotal);
+  const dayKey = localDayKey();
   const button = $('#sendOrder');
   button.disabled = true;
   button.textContent = 'جارٍ إرسال الطلب...';
   try {
     if (!auth.currentUser) await sdk.signInAnonymously(auth);
-    const orderData = {
-      orderNumber,
+    const orderRef = sdk.doc(sdk.collection(db, 'orders'));
+    const counterRef = sdk.doc(db, 'dailyCounters', dayKey);
+    const orderBase = {
       phone,
       items: lines,
-      total,
+      subtotal: breakdown.subtotal,
+      taxes: breakdown.taxes,
+      taxTotal: breakdown.taxTotal,
+      total: breakdown.total,
       currency: currencies[0],
+      serviceType: state.serviceType,
       status: 'pending',
       customerUid: auth.currentUser.uid,
+      counterDate: dayKey,
       location: {
         latitude: state.verifiedLocation.latitude,
         longitude: state.verifiedLocation.longitude,
@@ -421,7 +486,14 @@ async function submitOrder() {
       },
       createdAt: sdk.serverTimestamp()
     };
-    await sdk.addDoc(sdk.collection(db, 'orders'), orderData);
+    const orderNumber = await sdk.runTransaction(db, async transaction => {
+      const counterSnapshot = await transaction.get(counterRef);
+      const sequence = (counterSnapshot.exists() ? Number(counterSnapshot.data().count || 0) : 0) + 1;
+      const number = displayOrderNumber(dayKey, sequence);
+      transaction.set(counterRef, { date: dayKey, count: sequence, lastOrderId: orderRef.id, updatedAt: sdk.serverTimestamp() });
+      transaction.set(orderRef, { ...orderBase, orderNumber, counterValue: sequence });
+      return number;
+    });
 
     let telegramSent = false;
     let telegramError = '';
@@ -434,9 +506,13 @@ async function submitOrder() {
           restaurantName: state.settings.name || 'TechBuilders',
           phone,
           items: lines,
-          total,
+          subtotal: breakdown.subtotal,
+          taxes: breakdown.taxes,
+          taxTotal: breakdown.taxTotal,
+          total: breakdown.total,
+          serviceType: state.serviceType,
           currency: currencies[0],
-          location: orderData.location
+          location: orderBase.location
         })
       });
       const result = await response.json().catch(() => ({}));
@@ -465,7 +541,7 @@ async function submitOrder() {
   } catch (error) {
     console.error(error);
     const message = error.code === 'permission-denied'
-      ? 'رفض Firestore الطلب. راجع قواعد Firestore من ملف firestore.rules.'
+      ? 'رفض Firestore الطلب أو تسلسل الرقم. تأكد من نشر قواعد v4 الموجودة في firestore.rules.'
       : error.message || 'تعذر تسجيل الطلب. حاول مجددًا.';
     toast(message, 6500);
   } finally {
@@ -534,6 +610,7 @@ $('#bookFrame').addEventListener('touchend', event => {
 }, { passive: true });
 
 $('#openCart').addEventListener('click', openCart);
+document.querySelectorAll('[data-service-type]').forEach(button => button.addEventListener('click', () => { state.serviceType = button.dataset.serviceType; renderCart(); }));
 $('#closeCart').addEventListener('click', closeCart);
 $('#cartBackdrop').addEventListener('click', closeCart);
 $('#verifyEntry').addEventListener('click', verifyEntry);

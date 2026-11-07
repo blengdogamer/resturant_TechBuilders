@@ -1,14 +1,12 @@
 rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
-    function signedIn() {
-      return request.auth != null;
-    }
+    function signedIn() { return request.auth != null; }
 
     function isAdmin() {
       return signedIn() && (
         (request.auth.token.email is string
-          && exists(/databases/$(database)/documents/admins/$(request.auth.token.email.lower()))
+          && exists(/databases/$(database)/documents/admins/$(request.auth.token.email.lower()) )
           && get(/databases/$(database)/documents/admins/$(request.auth.token.email.lower())).data.role == 'admin')
         || (exists(/databases/$(database)/documents/admins/$(request.auth.uid))
           && get(/databases/$(database)/documents/admins/$(request.auth.uid)).data.role == 'admin')
@@ -19,44 +17,62 @@ service cloud.firestore {
       return signedIn() && request.auth.token.firebase.sign_in_provider == 'anonymous';
     }
 
-    function validGuestOrder() {
+    function isEmployee() {
+      return signedIn()
+        && exists(/databases/$(database)/documents/staff/$(request.auth.uid))
+        && get(/databases/$(database)/documents/staff/$(request.auth.uid)).data.role == 'employee'
+        && get(/databases/$(database)/documents/staff/$(request.auth.uid)).data.active == true;
+    }
+
+    function employeeHas(permission) {
+      return isEmployee()
+        && get(/databases/$(database)/documents/staff/$(request.auth.uid)).data.permissions is list
+        && get(/databases/$(database)/documents/staff/$(request.auth.uid)).data.permissions.hasAny([permission]);
+    }
+
+    function validGuestOrder(orderId) {
+      let day = request.resource.data.counterDate;
+      let sequence = request.resource.data.counterValue;
+      let counter = getAfter(/databases/$(database)/documents/dailyCounters/$(day));
       return isGuest()
         && request.resource.data.keys().hasAll([
-          'orderNumber', 'phone', 'items', 'total', 'currency',
-          'status', 'customerUid', 'location', 'createdAt'
+          'orderNumber', 'phone', 'items', 'subtotal', 'taxes', 'taxTotal', 'total', 'currency',
+          'serviceType', 'status', 'customerUid', 'counterDate', 'counterValue', 'location', 'createdAt'
         ])
         && request.resource.data.keys().hasOnly([
-          'orderNumber', 'phone', 'items', 'total', 'currency',
-          'status', 'customerUid', 'location', 'createdAt'
+          'orderNumber', 'phone', 'items', 'subtotal', 'taxes', 'taxTotal', 'total', 'currency',
+          'serviceType', 'status', 'customerUid', 'counterDate', 'counterValue', 'location', 'createdAt'
         ])
         && request.resource.data.orderNumber is string
-        && request.resource.data.orderNumber.size() >= 5
-        && request.resource.data.orderNumber.size() <= 40
+        && request.resource.data.orderNumber.matches('^[0-9]{2}-[0-9]{2}-[0-9]{2}-[0-9]+$')
+        && day is string && day.matches('^[0-9]{4}-[0-9]{2}-[0-9]{2}$')
+        && sequence is int && sequence > 0
+        && request.resource.data.orderNumber == day.substring(2, 4) + '-' + day.substring(5, 7) + '-' + day.substring(8, 10) + '-' + sequence
+        && counter.data.count == sequence
+        && counter.data.lastOrderId == orderId
         && request.resource.data.phone is string
         && request.resource.data.phone.size() >= 7
         && request.resource.data.phone.size() <= 24
         && request.resource.data.items is list
         && request.resource.data.items.size() > 0
         && request.resource.data.items.size() <= 30
-        && request.resource.data.total is number
-        && request.resource.data.total >= 0
-        && request.resource.data.currency is string
-        && request.resource.data.currency.size() <= 12
+        && request.resource.data.subtotal is number && request.resource.data.subtotal >= 0
+        && request.resource.data.taxes is list
+        && request.resource.data.taxTotal is number && request.resource.data.taxTotal >= 0
+        && request.resource.data.total is number && request.resource.data.total >= request.resource.data.subtotal
+        && request.resource.data.currency is string && request.resource.data.currency.size() <= 12
+        && request.resource.data.serviceType in ['dineIn', 'takeaway']
         && request.resource.data.status == 'pending'
         && request.resource.data.customerUid == request.auth.uid
         && request.resource.data.location is map
         && request.resource.data.location.latitude is number
-        && request.resource.data.location.latitude >= -90
-        && request.resource.data.location.latitude <= 90
+        && request.resource.data.location.latitude >= -90 && request.resource.data.location.latitude <= 90
         && request.resource.data.location.longitude is number
-        && request.resource.data.location.longitude >= -180
-        && request.resource.data.location.longitude <= 180
+        && request.resource.data.location.longitude >= -180 && request.resource.data.location.longitude <= 180
         && request.resource.data.location.accuracy is number
-        && request.resource.data.location.accuracy >= 0
-        && request.resource.data.location.accuracy <= 250
+        && request.resource.data.location.accuracy >= 0 && request.resource.data.location.accuracy <= 250
         && request.resource.data.location.distanceMeters is number
-        && request.resource.data.location.distanceMeters >= 0
-        && request.resource.data.location.distanceMeters <= 500
+        && request.resource.data.location.distanceMeters >= 0 && request.resource.data.location.distanceMeters <= 500
         && request.resource.data.location.checkedAt is string
         && request.resource.data.createdAt == request.time;
     }
@@ -70,9 +86,37 @@ service cloud.firestore {
       allow create, update, delete: if false;
     }
 
+    match /staff/{uid} {
+      allow get: if isAdmin() || (signedIn() && request.auth.uid == uid);
+      allow list: if isAdmin();
+      allow create, update, delete: if isAdmin();
+    }
+
     match /settings/{settingId} {
       allow read: if settingId == 'restaurant';
       allow write: if isAdmin();
+    }
+
+    match /dailyCounters/{day} {
+      allow get: if isGuest();
+      allow list: if false;
+      allow create: if isGuest()
+        && request.resource.data.keys().hasOnly(['date', 'count', 'lastOrderId', 'updatedAt'])
+        && request.resource.data.date == day
+        && request.resource.data.count == 1
+        && request.resource.data.lastOrderId is string
+        && getAfter(/databases/$(database)/documents/orders/$(request.resource.data.lastOrderId)).data.counterDate == day
+        && getAfter(/databases/$(database)/documents/orders/$(request.resource.data.lastOrderId)).data.counterValue == 1
+        && request.resource.data.updatedAt == request.time;
+      allow update: if isGuest()
+        && request.resource.data.keys().hasOnly(['date', 'count', 'lastOrderId', 'updatedAt'])
+        && request.resource.data.date == day
+        && request.resource.data.count == resource.data.count + 1
+        && request.resource.data.lastOrderId is string
+        && getAfter(/databases/$(database)/documents/orders/$(request.resource.data.lastOrderId)).data.counterDate == day
+        && getAfter(/databases/$(database)/documents/orders/$(request.resource.data.lastOrderId)).data.counterValue == request.resource.data.count
+        && request.resource.data.updatedAt == request.time;
+      allow delete: if false;
     }
 
     match /menuGroups/{groupId} {
@@ -91,12 +135,28 @@ service cloud.firestore {
     }
 
     match /orders/{orderId} {
-      allow read: if isAdmin();
-      allow create: if validGuestOrder();
-      allow update: if isAdmin()
-        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['status', 'updatedAt'])
-        && request.resource.data.status in ['pending', 'accepted', 'preparing', 'ready', 'completed', 'cancelled'];
-      allow delete: if isAdmin();
+      allow read: if isAdmin() || employeeHas('orders');
+      allow create: if validGuestOrder(orderId);
+      allow update: if (isAdmin()
+          && request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+            'status', 'updatedAt', 'items', 'serviceType', 'subtotal', 'taxes', 'taxTotal', 'total', 'currency'
+          ])
+          && request.resource.data.status in ['pending', 'accepted', 'preparing', 'ready', 'completed', 'cancelled'])
+        || (employeeHas('orders')
+          && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['status', 'updatedAt'])
+          && request.resource.data.status in ['pending', 'accepted', 'preparing', 'ready', 'completed', 'cancelled']);
+      allow delete: if isAdmin() || (employeeHas('orders')
+        && getAfter(/databases/$(database)/documents/orderArchive/$(orderId)).data.status == 'completed'
+        && getAfter(/databases/$(database)/documents/orderArchive/$(orderId)).data.orderNumber == resource.data.orderNumber);
+    }
+
+    match /orderArchive/{orderId} {
+      allow read: if isAdmin() || employeeHas('archive') || employeeHas('orders');
+      allow create: if isAdmin() || (employeeHas('orders')
+        && request.resource.data.status == 'completed'
+        && get(/databases/$(database)/documents/orders/$(orderId)).data.orderNumber == request.resource.data.orderNumber);
+      allow update: if isAdmin();
+      allow delete: if isAdmin() || employeeHas('orders');
     }
 
     match /{document=**} {

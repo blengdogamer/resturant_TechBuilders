@@ -1,9 +1,26 @@
-# TechBuilders Restaurant v3.0
+# TechBuilders Restaurant v4
 
-- إزالة Firebase Cloud Functions وربط الطلب بها.
-- حذف QR والرموز المؤقتة؛ التحقق الآن عبر GPS ونطاق المطعم المحفوظ في Firestore.
-- إضافة Cloudflare Pages Function لإشعار Telegram مع حفظ Bot Token وChat ID كأسرار خارج الشيفرة العامة.
-- السماح للعميل المجهول بإنشاء طلب محدود الحقول في Firestore، مع إبقاء قراءة الطلبات وتعديلها للمسؤول.
-- تحويل جميع روابط الأصول إلى مسارات نسبية ودعم Cloudflare Pages/GitHub repository subpaths.
-- تحسين تخطيط المنيو والسلة وأزرار اللمس والكتابة لتجربة الهاتف.
-- إزالة Firebase CLI وملفات النشر القديمة التي تتطلب Blaze.
+## Added
+- Transaction-based daily order numbering: `YY-MM-DD-sequence`.
+- Dine-in/takeaway selection and configurable per-service tax/fee lines.
+- Active orders separated from a latest-10 completed-order archive with date/order-number search and pagination.
+- Owner order editor for adding/removing lines, quantities and notes, and recalculating totals/taxes.
+- Employee account creation through a secondary Firebase Auth app, with Firestore section permissions.
+- Centralized logo URL and palette settings stored in `settings/restaurant`.
+- Legacy completed orders migrate to the archive when the owner opens the admin panel.
+- Isolated customer anonymous authentication from the admin authentication session.
+
+## Preserved
+- Existing book-style Arabic RTL menu.
+- Firebase menu/settings/orders model.
+- Cloudflare Pages Functions Telegram notification endpoint and Cloudflare secrets approach.
+- GPS restaurant-radius check.
+
+## Not included
+- Sham Cash or any other payment-gateway integration.
+
+## Notes
+- Publish the v4 `firestore.rules` before testing new orders, staff accounts, archive actions or order edits.
+- Keep the actual Firebase web config and Cloudflare Secrets from the working deployment; they are intentionally not embedded in this package.
+
+- Expanded employee view permissions to cover overview, groups, categories, items, active orders, and archive; menu sections remain read-only for staff.

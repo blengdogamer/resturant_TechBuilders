@@ -91,7 +91,15 @@
     <div class="drawer-head"><div><span class="section-label">YOUR ORDER</span><h2>سلة الطلب</h2></div><button class="close-btn" id="closeCart" type="button" aria-label="إغلاق">×</button></div>
     <div class="cart-lines" id="cartLines"><div class="cart-empty"><span>▤</span><b>السلة فارغة</b><p>أضف وجباتك المفضلة من المنيو.</p></div></div>
     <div class="cart-checkout">
-      <div class="total-row"><span>الإجمالي</span><strong id="cartTotal">0 ل.س</strong></div>
+      <div class="service-type-picker" aria-label="نوع الطلب">
+        <button type="button" data-service-type="dineIn" class="active" aria-pressed="true">محلي داخل المطعم</button>
+        <button type="button" data-service-type="takeaway" aria-pressed="false">سفري</button>
+      </div>
+      <div class="price-breakdown">
+        <div class="total-row"><span>المجموع الفرعي</span><strong id="cartSubtotal">0 ل.س</strong></div>
+        <div id="cartTaxLines"></div>
+        <div class="total-row grand-total"><span>الإجمالي شامل الرسوم</span><strong id="cartTotal">0 ل.س</strong></div>
+      </div>
       <label class="field-label" for="customerPhone">رقم الهاتف للتواصل</label>
       <input id="customerPhone" type="tel" inputmode="tel" autocomplete="tel" placeholder="مثال: 09xxxxxxxx" maxlength="24">
       <div class="gate-box" id="gateBox">

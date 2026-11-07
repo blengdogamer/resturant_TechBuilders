@@ -1,8 +1,8 @@
 {
   "name": "techbuilders-restaurant",
-  "version": "3.0.0",
+  "version": "4.0.0",
   "private": true,
-  "description": "TechBuilders restaurant menu hosted on Cloudflare Pages with Firebase and Telegram",
+  "description": "TechBuilders Arabic restaurant menu v4 with Firebase orders, staff permissions, archive, configurable taxes and Cloudflare Telegram notifications",
   "scripts": {
     "preview": "node preview-server.js"
   }

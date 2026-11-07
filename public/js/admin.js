@@ -1,7 +1,14 @@
-import { auth, db, sdk, isFirebaseConfigured } from './firebase.js';
+import { auth, db, sdk, isFirebaseConfigured, createEmployeeAuthAccount } from './firebase.js';
 
 const $ = selector => document.querySelector(selector);
 let currentAdmin = null;
+let currentRole = 'admin';
+let currentPermissions = ['overview', 'orders', 'archive'];
+let archiveOrders = [];
+let archivePage = 1;
+let orderEditingDraft = null;
+let taxesDraft = [];
+const migratingCompletedOrders = new Set();
 let groups = [];
 let categories = [];
 let items = [];
@@ -36,19 +43,44 @@ function showLogin(message = '') {
   if (message) $('#loginError').textContent = message;
 }
 
-async function checkAdmin(user) {
+async function resolveAccess(user) {
   if (!user?.email) throw new Error('هذا الحساب لا يحتوي على بريد إلكتروني.');
   const email = user.email.trim().toLowerCase();
   const [emailSnap, uidSnap] = await Promise.all([
     sdk.getDoc(sdk.doc(db, 'admins', email)),
     sdk.getDoc(sdk.doc(db, 'admins', user.uid))
   ]);
-  const authorizedByEmail = emailSnap.exists() && emailSnap.data().role === 'admin';
-  const authorizedByUid = uidSnap.exists() && uidSnap.data().role === 'admin';
-  if (!authorizedByEmail && !authorizedByUid) {
-    throw new Error(`الحساب ${email} غير مضاف كمسؤول. أضف وثيقة admins/${email} واجعل role = admin.`);
+  const isOwner = (emailSnap.exists() && emailSnap.data().role === 'admin')
+    || (uidSnap.exists() && uidSnap.data().role === 'admin');
+  if (isOwner) return { email, role: 'admin', permissions: ['overview', 'orders', 'archive'] };
+  const staffSnap = await sdk.getDoc(sdk.doc(db, 'staff', user.uid));
+  if (staffSnap.exists() && staffSnap.data().active !== false && staffSnap.data().role === 'employee') {
+    const permissions = Array.isArray(staffSnap.data().permissions) ? staffSnap.data().permissions : [];
+    if (!permissions.length) throw new Error('حساب الموظف لا يملك صلاحيات مفعّلة. اطلب من صاحب المطعم تعديل صلاحياته.');
+    return { email, role: 'employee', permissions };
   }
-  return email;
+  throw new Error(`الحساب ${email} غير مخوّل. أضفه إلى admins كمالك أو أنشئه من إدارة الموظفين.`);
+}
+
+function canSee(panel) {
+  return currentRole === 'admin' || currentPermissions.includes(panel);
+}
+
+function applyPermissions() {
+  document.querySelectorAll('#sideNav [data-panel]').forEach(button => {
+    const panel = button.dataset.panel;
+    button.hidden = currentRole !== 'admin' && !canSee(panel);
+  });
+  document.querySelectorAll('[data-owner-only]').forEach(node => { node.hidden = currentRole !== 'admin'; });
+  document.querySelectorAll('#sideNav [data-panel]').forEach(button => {
+    const panel = button.dataset.panel;
+    if (['groups', 'categories', 'items'].includes(panel)) button.hidden = currentRole !== 'admin' && !canSee(panel);
+  });
+  document.querySelectorAll('[data-employee-role]').forEach(node => { node.hidden = currentRole !== 'employee'; });
+  const roleLabel = currentRole === 'admin' ? 'OWNER / ADMIN' : 'EMPLOYEE';
+  $('#roleLabel').textContent = roleLabel;
+  const firstAllowed = currentRole === 'admin' ? 'overview' : ['overview', 'orders', 'archive', 'groups', 'categories', 'items'].find(panel => currentPermissions.includes(panel));
+  switchPanel(firstAllowed);
 }
 
 async function login(event) {
@@ -82,51 +114,79 @@ async function login(event) {
 async function authChanged(user) {
   if (!user) {
     currentAdmin = null;
+    currentRole = 'admin';
+    currentPermissions = [];
     if (stopOrdersListener) stopOrdersListener();
     showLogin();
     return;
   }
   if (!isFirebaseConfigured || !db) return showLogin('إعدادات Firebase غير مكتملة.');
   try {
-    const email = await checkAdmin(user);
+    const access = await resolveAccess(user);
     currentAdmin = user;
-    $('#adminEmailLabel').textContent = email;
+    currentRole = access.role;
+    currentPermissions = access.permissions;
+    $('#adminEmailLabel').textContent = access.email;
     $('#loginScreen').hidden = true;
     $('#adminApp').hidden = false;
+    applyPermissions();
     await loadAdminData();
   } catch (error) {
     console.error(error);
     await sdk.signOut(auth).catch(() => {});
-    showLogin(error.message || 'هذا الحساب ليس ضمن مسؤولي المطعم.');
+    showLogin(error.message || 'هذا الحساب غير مخوّل.');
   }
 }
 
 async function loadAdminData() {
   try {
-    const [groupSnap, categorySnap, itemSnap, settingsSnap] = await Promise.all([
-      sdk.getDocs(sdk.collection(db, 'menuGroups')),
-      sdk.getDocs(sdk.collection(db, 'categories')),
-      sdk.getDocs(sdk.collection(db, 'menuItems')),
-      sdk.getDoc(sdk.doc(db, 'settings', 'restaurant'))
-    ]);
-    groups = sortByOrder(groupSnap.docs.map(doc => ({ id: doc.id, ...doc.data() })));
-    categories = sortByOrder(categorySnap.docs.map(doc => ({ id: doc.id, ...doc.data() })));
-    items = sortByOrder(itemSnap.docs.map(doc => ({ id: doc.id, ...doc.data() })));
+    const settingsSnap = await sdk.getDoc(sdk.doc(db, 'settings', 'restaurant'));
     restaurantSettings = settingsSnap.exists() ? settingsSnap.data() : {};
     fillSettings();
+    applyAdminBranding();
+    if (currentRole === 'admin') {
+      await loadMenuCollections();
+      loadStaff();
+    } else if (['overview', 'groups', 'categories', 'items'].some(canSee)) {
+      const [groupSnap, categorySnap, itemSnap] = await Promise.all([
+        sdk.getDocs(sdk.query(sdk.collection(db, 'menuGroups'), sdk.where('active', '==', true))),
+        sdk.getDocs(sdk.query(sdk.collection(db, 'categories'), sdk.where('active', '==', true))),
+        sdk.getDocs(sdk.query(sdk.collection(db, 'menuItems'), sdk.where('active', '==', true)))
+      ]);
+      groups = sortByOrder(groupSnap.docs.map(doc => ({ id: doc.id, ...doc.data() })));
+      categories = sortByOrder(categorySnap.docs.map(doc => ({ id: doc.id, ...doc.data() })));
+      items = sortByOrder(itemSnap.docs.map(doc => ({ id: doc.id, ...doc.data() })));
+    }
     renderEverything();
-    listenOrders();
+    if (canSee('orders')) listenOrders();
+    if (canSee('archive')) loadArchive();
   } catch (error) {
     console.error(error);
     showToast('تعذر تحميل بيانات الإدارة: ' + (error.message || 'تحقق من قواعد Firestore'), 6000);
   }
 }
 
+function applyAdminBranding() {
+  const theme = restaurantSettings.theme || {};
+  const root = document.documentElement;
+  const cssMap = { '--blue': theme.primary, '--blue2': theme.accent, '--bg': theme.background, '--panel': theme.surface, '--panel2': theme.surface2, '--paper': theme.paper, '--paper2': theme.paper2, '--ink': theme.ink, '--text': theme.text, '--muted': theme.muted };
+  for (const [property, value] of Object.entries(cssMap)) if (typeof value === 'string' && /^#[0-9a-f]{6}$/i.test(value)) root.style.setProperty(property, value);
+  if (typeof theme.border === 'string' && /^#[0-9a-f]{6}$/i.test(theme.border)) root.style.setProperty('--line', `${theme.border}80`);
+  if (theme.background) document.querySelector('meta[name="theme-color"]')?.setAttribute('content', theme.background);
+  const rawLogo = String(restaurantSettings.logoUrl || '').trim();
+  const logo = rawLogo && (rawLogo.startsWith('https://') || rawLogo.startsWith('./') || rawLogo.startsWith('/')) ? rawLogo : './assets/techbuilders-logo.jpg';
+  document.querySelectorAll('.admin-brand img,.login-logo').forEach(image => { image.src = logo; });
+  const favicon = document.querySelector('link[rel="icon"]');
+  if (favicon) favicon.href = logo;
+}
+
 function renderEverything() {
-  renderGroups();
-  renderCategories();
-  populateCategoryFilter();
-  renderItems();
+  if (currentRole === 'admin' || canSee('groups')) renderGroups();
+  if (currentRole === 'admin' || canSee('categories')) renderCategories();
+  if (currentRole === 'admin' || canSee('items')) {
+    populateCategoryFilter();
+    renderItems();
+  }
   renderStats();
   renderOrders();
 }
@@ -149,7 +209,7 @@ function renderGroups() {
     <article class="entity-card">
       <div class="entity-icon">▤</div>
       <div class="entity-copy"><h4>${escapeHtml(group.name)}</h4><p>${escapeHtml(group.description || 'قسم رئيسي في المنيو')}</p><div class="entity-meta">${categories.filter(category => category.groupId === group.id).length} تصنيف فرعي · <span class="status-pill ${group.active === false ? 'off' : ''}">${group.active === false ? 'مخفي' : 'ظاهر'}</span></div></div>
-      <div class="entity-actions"><button class="icon-button" data-edit="group" data-id="${escapeHtml(group.id)}" aria-label="تعديل">✎</button><button class="icon-button delete" data-delete="group" data-id="${escapeHtml(group.id)}" aria-label="حذف">×</button></div>
+      <div class="entity-actions" ${currentRole === 'admin' ? '' : 'hidden'}><button class="icon-button" data-edit="group" data-id="${escapeHtml(group.id)}" aria-label="تعديل">✎</button><button class="icon-button delete" data-delete="group" data-id="${escapeHtml(group.id)}" aria-label="حذف">×</button></div>
     </article>`).join('');
 }
 
@@ -162,7 +222,7 @@ function renderCategories() {
     <article class="entity-card">
       <div class="entity-icon">☷</div>
       <div class="entity-copy"><h4>${escapeHtml(category.name)}</h4><p>القسم الرئيسي: ${escapeHtml(groupName(category.groupId))}</p><div class="entity-meta">${items.filter(item => item.categoryId === category.id).length} وجبة · <span class="status-pill ${category.active === false ? 'off' : ''}">${category.active === false ? 'مخفي' : 'ظاهر'}</span></div></div>
-      <div class="entity-actions"><button class="icon-button" data-edit="category" data-id="${escapeHtml(category.id)}" aria-label="تعديل">✎</button><button class="icon-button delete" data-delete="category" data-id="${escapeHtml(category.id)}" aria-label="حذف">×</button></div>
+      <div class="entity-actions" ${currentRole === 'admin' ? '' : 'hidden'}><button class="icon-button" data-edit="category" data-id="${escapeHtml(category.id)}" aria-label="تعديل">✎</button><button class="icon-button delete" data-delete="category" data-id="${escapeHtml(category.id)}" aria-label="حذف">×</button></div>
     </article>`).join('');
 }
 
@@ -185,7 +245,7 @@ function renderItems() {
     <article class="entity-card">
       ${item.imageUrl ? `<img class="entity-image" src="${escapeHtml(item.imageUrl)}" alt="${escapeHtml(item.name)}">` : `<div class="entity-image entity-icon">TB</div>`}
       <div class="entity-copy"><h4>${escapeHtml(item.name)}</h4><p>${escapeHtml(categoryName(item.categoryId))} · ${escapeHtml((item.description || '').slice(0, 75))}</p><div class="entity-meta">${money(item.price, item.currency)} · <span class="status-pill ${item.active === false ? 'off' : ''}">${item.active === false ? 'مخفي' : 'متاح'}</span></div></div>
-      <div class="entity-actions"><button class="icon-button" data-edit="item" data-id="${escapeHtml(item.id)}" aria-label="تعديل">✎</button><button class="icon-button delete" data-delete="item" data-id="${escapeHtml(item.id)}" aria-label="حذف">×</button></div>
+      <div class="entity-actions" ${currentRole === 'admin' ? '' : 'hidden'}><button class="icon-button" data-edit="item" data-id="${escapeHtml(item.id)}" aria-label="تعديل">✎</button><button class="icon-button delete" data-delete="item" data-id="${escapeHtml(item.id)}" aria-label="حذف">×</button></div>
     </article>`).join('');
   $('#itemsList').querySelectorAll('img').forEach(img => img.addEventListener('error', () => { img.style.visibility = 'hidden'; }, { once: true }));
 }
@@ -194,31 +254,97 @@ function formatDate(value) {
   try {
     const date = value?.toDate ? value.toDate() : value ? new Date(value) : null;
     if (!date || Number.isNaN(date.getTime())) return 'وقت غير متاح';
-    return new Intl.DateTimeFormat('ar-SY', { dateStyle: 'medium', timeStyle: 'short' }).format(date);
+    return new Intl.DateTimeFormat('ar-SY', { dateStyle: 'medium', timeStyle: 'short', timeZone: restaurantSettings.timeZone || 'Asia/Damascus' }).format(date);
   } catch { return 'وقت غير متاح'; }
 }
 
 function renderOrders() {
   const selectedStatus = $('#orderFilter').value || 'all';
-  const rows = orders.filter(order => selectedStatus === 'all' || order.status === selectedStatus);
+  const rows = orders.filter(order => order.status !== 'completed' && (selectedStatus === 'all' || order.status === selectedStatus));
   const html = rows.length ? rows.map(order => `
     <article class="order-card">
-      <div class="order-head"><div><div class="order-id">${escapeHtml(order.orderNumber || order.id)}</div><div class="order-time">${formatDate(order.createdAt)}</div></div><div class="order-phone">${escapeHtml(order.phone || '')}</div></div>
+      <div class="order-head"><div><div class="order-id">${escapeHtml(order.orderNumber || order.id)}</div><div class="order-time">${formatDate(order.createdAt)} · ${order.serviceType === 'takeaway' ? 'سفري' : 'محلي'}</div></div><div class="order-phone">${escapeHtml(order.phone || '')}</div></div>
       <div class="order-items">${(order.items || []).map(item => `<div class="order-item-line"><span>${escapeHtml(item.name)} × ${Number(item.quantity || 0)}${item.note ? `<small class="order-item-note">ملاحظة: ${escapeHtml(item.note)}</small>` : ''}</span><b>${money(item.subtotal, item.currency)}</b></div>`).join('')}</div>
-      <div class="order-bottom"><div class="order-total">الإجمالي: ${money(order.total, order.currency)}</div><select data-order-status="${escapeHtml(order.id)}" aria-label="حالة الطلب">${Object.entries(statusNames).map(([value, label]) => `<option value="${value}" ${order.status === value ? 'selected' : ''}>${label}</option>`).join('')}</select></div>
-    </article>`).join('') : '<div class="empty-list">لا توجد طلبات في هذه القائمة حاليًا.</div>';
+      <div class="order-bottom"><div class="order-total">الإجمالي: ${money(order.total, order.currency)}</div><div class="order-actions">${currentRole === 'admin' ? `<button class="outline-button small" data-edit-order="${escapeHtml(order.id)}">تعديل الطلب</button>` : ''}<select data-order-status="${escapeHtml(order.id)}" aria-label="حالة الطلب">${Object.entries(statusNames).filter(([value]) => value !== 'completed' || order.status === value).map(([value, label]) => `<option value="${value}" ${order.status === value ? 'selected' : ''}>${label}</option>`).join('')}<option value="completed">مكتمل — نقل للأرشيف</option></select></div></div>
+    </article>`).join('') : '<div class="empty-list">لا توجد طلبات نشطة في هذه القائمة حاليًا.</div>';
   $('#ordersList').innerHTML = html;
   $('#recentOrders').innerHTML = rows.slice(0, 4).map(order => `
     <article class="order-card"><div class="order-head"><div><div class="order-id">${escapeHtml(order.orderNumber || order.id)}</div><div class="order-time">${formatDate(order.createdAt)}</div></div><div class="order-phone">${escapeHtml(order.phone || '')}</div></div><div class="order-bottom"><div class="order-total">${money(order.total, order.currency)}</div><span class="status-pill">${escapeHtml(statusNames[order.status] || order.status)}</span></div></article>`).join('') || '<div class="empty-list">لم تصل طلبات بعد.</div>';
   renderStats();
 }
 
+async function loadArchive() {
+  if (!canSee('archive')) return;
+  try {
+    const archiveQuery = sdk.query(sdk.collection(db, 'orderArchive'), sdk.orderBy('completedAt', 'desc'), sdk.limit(10));
+    const snapshot = await sdk.getDocs(archiveQuery);
+    archiveOrders = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+    renderArchive();
+  } catch (error) {
+    console.error(error);
+    showToast('تعذر تحميل أرشيف الطلبات: ' + error.message, 5000);
+  }
+}
+
+function restaurantDateKey(value) {
+  const date = value?.toDate ? value.toDate() : value ? new Date(value) : null;
+  if (!date || Number.isNaN(date.getTime())) return '';
+  const parts = Object.fromEntries(new Intl.DateTimeFormat('en-US', { timeZone: restaurantSettings.timeZone || 'Asia/Damascus', year: 'numeric', month: '2-digit', day: '2-digit' }).formatToParts(date).map(part => [part.type, part.value]));
+  return `${parts.year}-${parts.month}-${parts.day}`;
+}
+
+function renderArchive() {
+  const search = ($('#archiveSearch')?.value || '').trim().toLowerCase();
+  const date = $('#archiveDate')?.value || '';
+  const filtered = archiveOrders.filter(order => {
+    const byNumber = !search || String(order.orderNumber || '').toLowerCase().includes(search);
+    const byDate = !date || restaurantDateKey(order.completedAt) === date || restaurantDateKey(order.createdAt) === date;
+    return byNumber && byDate;
+  });
+  const pageSize = 5;
+  const pageCount = Math.max(1, Math.ceil(filtered.length / pageSize));
+  archivePage = Math.min(Math.max(1, archivePage), pageCount);
+  const pageRows = filtered.slice((archivePage - 1) * pageSize, archivePage * pageSize);
+  $('#archiveList').innerHTML = pageRows.length ? pageRows.map(order => `
+    <article class="order-card"><div class="order-head"><div><div class="order-id">${escapeHtml(order.orderNumber || order.id)}</div><div class="order-time">اكتمل: ${formatDate(order.completedAt)} · أُنشئ: ${formatDate(order.createdAt)}</div></div><div class="order-phone">${escapeHtml(order.phone || '')}</div></div>
+    <div class="order-items">${(order.items || []).map(item => `<div class="order-item-line"><span>${escapeHtml(item.name)} × ${Number(item.quantity || 0)}</span><b>${money(item.subtotal, item.currency)}</b></div>`).join('')}</div><div class="order-bottom"><span class="status-pill">مكتمل</span><div class="order-total">${money(order.total, order.currency)}</div></div></article>`).join('') : '<div class="empty-list">لا توجد طلبات مطابقة في الأرشيف.</div>';
+  $('#archivePageLabel').textContent = `${archivePage} / ${pageCount}`;
+  $('#archivePrev').disabled = archivePage <= 1;
+  $('#archiveNext').disabled = archivePage >= pageCount;
+  $('#archiveCount').textContent = `${filtered.length} طلب (الحد الأقصى المحفوظ: 10)`;
+}
+
+async function moveOrderToArchive(order) {
+  const batch = sdk.writeBatch(db);
+  const { id, ...data } = order;
+  batch.set(sdk.doc(db, 'orderArchive', id), { ...data, status: 'completed', completedAt: sdk.serverTimestamp() });
+  batch.delete(sdk.doc(db, 'orders', id));
+  await batch.commit();
+  if (currentRole === 'admin' || canSee('orders')) {
+    const recent = await sdk.getDocs(sdk.query(sdk.collection(db, 'orderArchive'), sdk.orderBy('completedAt', 'desc'), sdk.limit(30)));
+    if (recent.docs.length > 10) {
+      const prune = sdk.writeBatch(db);
+      recent.docs.slice(10).forEach(doc => prune.delete(doc.ref));
+      await prune.commit();
+    }
+  }
+  if (canSee('archive')) await loadArchive();
+}
+
 function listenOrders() {
   if (stopOrdersListener) stopOrdersListener();
   const ordersQuery = sdk.query(sdk.collection(db, 'orders'), sdk.orderBy('createdAt', 'desc'), sdk.limit(100));
   stopOrdersListener = sdk.onSnapshot(ordersQuery, snapshot => {
-    orders = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+    const allRows = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+    orders = allRows.filter(order => order.status !== 'completed');
     renderOrders();
+    if (currentRole === 'admin') {
+      allRows.filter(order => order.status === 'completed' && !migratingCompletedOrders.has(order.id)).forEach(order => {
+        migratingCompletedOrders.add(order.id);
+        moveOrderToArchive(order).catch(error => { console.error('Legacy archive migration failed', error); showToast('تعذر نقل طلب قديم للأرشيف: ' + error.message, 5000); })
+          .finally(() => migratingCompletedOrders.delete(order.id));
+      });
+    }
   }, error => {
     console.error(error);
     showToast('تعذر جلب الطلبات: ' + error.message, 5000);
@@ -233,6 +359,44 @@ function fillSettings() {
   $('#settingLat').value = restaurantSettings.location?.lat ?? '';
   $('#settingLng').value = restaurantSettings.location?.lng ?? '';
   $('#settingRadius').value = restaurantSettings.location?.radius || 100;
+  $('#settingTimeZone').value = restaurantSettings.timeZone || 'Asia/Damascus';
+  $('#settingLogoUrl').value = restaurantSettings.logoUrl || '';
+  const theme = restaurantSettings.theme || {};
+  $('#themePrimary').value = theme.primary || '#087cf0';
+  $('#themeAccent').value = theme.accent || '#42a1ff';
+  $('#themeBackground').value = theme.background || '#080b10';
+  $('#themeSurface').value = theme.surface || '#10151d';
+  $('#themeSurface2').value = theme.surface2 || '#151c26';
+  $('#themePaper').value = theme.paper || '#f3eee4';
+  $('#themeInk').value = theme.ink || '#20252b';
+  $('#themeText').value = theme.text || '#f5f7fa';
+  $('#themeMuted').value = theme.muted || '#8993a2';
+  $('#themeBorder').value = theme.border || '#364454';
+  taxesDraft = Array.isArray(restaurantSettings.taxes) ? restaurantSettings.taxes.map(tax => ({ ...tax })) : [];
+  renderTaxSettings();
+}
+
+function syncTaxDraftFromDom() {
+  taxesDraft = taxesDraft.map((tax, index) => {
+    const row = $('#taxSettingsRows').querySelector(`[data-tax-index="${index}"]`);
+    if (!row) return tax;
+    return {
+      ...tax,
+      name: row.querySelector('[data-tax-field="name"]')?.value || '',
+      rate: Number(row.querySelector('[data-tax-field="rate"]')?.value || 0),
+      appliesTo: ['dineIn', 'takeaway'].filter(key => row.querySelector(`[data-tax-applies="${key}"]`)?.checked),
+      enabled: row.querySelector('[data-tax-enabled]')?.checked ?? true
+    };
+  });
+}
+
+function renderTaxSettings() {
+  $('#taxSettingsRows').innerHTML = taxesDraft.map((tax, index) => `
+    <div class="tax-setting-row" data-tax-index="${index}">
+      <div class="tax-setting-top"><b>رسم إضافي ${index + 1}</b><button type="button" class="remove-tax-button" data-remove-tax="${index}">حذف</button></div>
+      <div class="form-two"><label>اسم الرسم<input data-tax-field="name" data-index="${index}" maxlength="40" value="${escapeHtml(tax.name || '')}" required></label><label>النسبة %<input data-tax-field="rate" data-index="${index}" type="number" min="0" max="100" step="0.1" value="${Number(tax.rate || 0)}" required></label></div>
+      <div class="tax-applies"><label><input type="checkbox" data-tax-applies="dineIn" data-index="${index}" ${(tax.appliesTo || []).includes('dineIn') ? 'checked' : ''}> محلي</label><label><input type="checkbox" data-tax-applies="takeaway" data-index="${index}" ${(tax.appliesTo || []).includes('takeaway') ? 'checked' : ''}> سفري</label><label><input type="checkbox" data-tax-enabled data-index="${index}" ${tax.enabled === false ? '' : 'checked'}> مفعّل</label></div>
+    </div>`).join('') || '<div class="help-note">لا توجد رسوم إضافية. يمكنك إضافة رسم عند الحاجة.</div>';
 }
 
 async function saveSettings(event) {
@@ -242,32 +406,49 @@ async function saveSettings(event) {
   const lat = latValue === '' ? null : Number(latValue);
   const lng = lngValue === '' ? null : Number(lngValue);
   const radius = Number($('#settingRadius').value || 100);
+  try { new Intl.DateTimeFormat('en-US', { timeZone: $('#settingTimeZone').value }).format(new Date()); } catch { $('#settingsMessage').textContent = 'اختر منطقة زمنية صحيحة.'; return; }
   if ((lat === null) !== (lng === null) || (lat !== null && (!Number.isFinite(lat) || !Number.isFinite(lng) || lat < -90 || lat > 90 || lng < -180 || lng > 180))) {
-    $('#settingsMessage').textContent = 'أدخل خط العرض وخط الطول معًا وبقيم صحيحة.';
-    return;
+    $('#settingsMessage').textContent = 'أدخل خط العرض وخط الطول معًا وبقيم صحيحة.'; return;
   }
-  if (!Number.isFinite(radius) || radius < 25 || radius > 500) {
-    $('#settingsMessage').textContent = 'نطاق الموقع يجب أن يكون بين 25 و500 متر.';
+  if (!Number.isFinite(radius) || radius < 25 || radius > 500) { $('#settingsMessage').textContent = 'نطاق الموقع يجب أن يكون بين 25 و500 متر.'; return; }
+  const logoUrl = $('#settingLogoUrl').value.trim();
+  if (logoUrl) { try { const url = new URL(logoUrl); if (url.protocol !== 'https:') throw new Error(); } catch { $('#settingsMessage').textContent = 'رابط الشعار يجب أن يكون HTTPS مباشرًا.'; return; } }
+  const theme = {
+    primary: $('#themePrimary').value, accent: $('#themeAccent').value,
+    background: $('#themeBackground').value, surface: $('#themeSurface').value,
+    surface2: $('#themeSurface2').value,
+    paper: $('#themePaper').value, paper2: '#e4dacb', ink: $('#themeInk').value,
+    text: $('#themeText').value, muted: $('#themeMuted').value, border: $('#themeBorder').value
+  };
+  let taxes;
+  try {
+    taxes = taxesDraft.map((tax, index) => {
+      const row = $('#taxSettingsRows').querySelector(`[data-tax-index="${index}"]`);
+      const name = row?.querySelector('[data-tax-field="name"]')?.value.trim() || '';
+      const rate = Number(row?.querySelector('[data-tax-field="rate"]')?.value || 0);
+      const appliesTo = ['dineIn', 'takeaway'].filter(key => row?.querySelector(`[data-tax-applies="${key}"]`)?.checked);
+      const enabled = row?.querySelector('[data-tax-enabled]')?.checked ?? true;
+      if (!name || !Number.isFinite(rate) || rate < 0 || rate > 100 || !appliesTo.length) throw new Error('أكمل اسم ونسبة ونوع تطبيق كل رسم، أو احذفه.');
+      return { id: tax.id || (crypto.randomUUID ? crypto.randomUUID() : `tax-${Date.now()}-${index}`), name, rate, appliesTo, enabled };
+    });
+  } catch (error) {
+    $('#settingsMessage').textContent = error.message;
     return;
   }
   $('#settingsMessage').textContent = '';
   try {
     await sdk.setDoc(sdk.doc(db, 'settings', 'restaurant'), {
-      name: $('#settingName').value.trim(),
-      footerMessage: $('#settingFooter').value.trim(),
-      currency: $('#settingCurrency').value.trim() || 'ل.س',
-      location: {
-        address: $('#settingAddress').value.trim(),
-        lat, lng, radius
-      },
+      name: $('#settingName').value.trim(), footerMessage: $('#settingFooter').value.trim(),
+      currency: $('#settingCurrency').value.trim() || 'ل.س', logoUrl, theme, taxes, timeZone: $('#settingTimeZone').value,
+      location: { address: $('#settingAddress').value.trim(), lat, lng, radius },
       updatedAt: sdk.serverTimestamp()
     }, { merge: true });
-    restaurantSettings = { ...restaurantSettings, name: $('#settingName').value.trim(), currency: $('#settingCurrency').value.trim(), location: { address: $('#settingAddress').value.trim(), lat, lng, radius } };
+    restaurantSettings = { ...restaurantSettings, name: $('#settingName').value.trim(), currency: $('#settingCurrency').value.trim(), logoUrl, theme, taxes, timeZone: $('#settingTimeZone').value, location: { address: $('#settingAddress').value.trim(), lat, lng, radius } };
+    applyAdminBranding();
     $('#settingsMessage').textContent = 'تم حفظ إعدادات المطعم.';
     showToast('تم حفظ الإعدادات بنجاح');
   } catch (error) {
-    console.error(error);
-    $('#settingsMessage').textContent = error.message || 'تعذر حفظ الإعدادات.';
+    console.error(error); $('#settingsMessage').textContent = error.message || 'تعذر حفظ الإعدادات.';
   }
 }
 
@@ -409,16 +590,117 @@ async function deleteEntity(type, id) {
 }
 
 function switchPanel(name) {
+  if (currentRole !== 'admin' && !canSee(name)) return showToast('ليس لديك صلاحية لعرض هذا القسم.');
   document.querySelectorAll('.panel').forEach(panel => panel.classList.toggle('active', panel.id === `panel-${name}`));
   document.querySelectorAll('.side-nav button').forEach(button => button.classList.toggle('active', button.dataset.panel === name));
-  const titles = { overview: 'نظرة عامة', groups: 'الأقسام الرئيسية', categories: 'التصنيفات الفرعية', items: 'الوجبات والأصناف', orders: 'طلبات العملاء', settings: 'إعدادات المطعم' };
+  const titles = { overview: 'نظرة عامة', groups: 'الأقسام الرئيسية', categories: 'التصنيفات الفرعية', items: 'الوجبات والأصناف', orders: 'الطلبات النشطة', archive: 'أرشيف الطلبات', staff: 'إدارة الموظفين', settings: 'إعدادات المطعم' };
   $('#panelTitle').textContent = titles[name] || 'لوحة الإدارة';
   $('#sidebar').classList.remove('open');
+  if (name === 'archive') loadArchive();
+}
+
+function openOrderEditDialog(order) {
+  if (currentRole !== 'admin') return showToast('تعديل تفاصيل الطلب متاح لصاحب المطعم فقط.');
+  orderEditingDraft = JSON.parse(JSON.stringify({ ...order, items: order.items || [] }));
+  const serviceLabel = order.serviceType === 'takeaway' ? 'سفري' : 'محلي';
+  $('#orderEditTitle').textContent = `تعديل الطلب ${order.orderNumber || ''}`;
+  $('#orderEditService').value = order.serviceType || 'dineIn';
+  $('#orderEditRows').innerHTML = orderEditingDraft.items.map((line, index) => `
+    <div class="order-edit-row" data-edit-index="${index}">
+      <div><b>${escapeHtml(line.name)}</b><small>السعر الحالي: ${money(line.unitPrice, line.currency)}</small></div>
+      <label>الكمية<input data-edit-quantity="${index}" type="number" min="1" max="20" value="${Number(line.quantity || 1)}"></label>
+      <label>ملاحظة<input data-edit-note="${index}" maxlength="250" value="${escapeHtml(line.note || '')}"></label>
+      <button type="button" class="remove-tax-button" data-remove-order-line="${index}">حذف</button>
+    </div>`).join('');
+  $('#orderEditAddItem').innerHTML = '<option value="">اختر صنفًا لإضافته</option>' + items.filter(item => item.active !== false).map(item => `<option value="${escapeHtml(item.id)}">${escapeHtml(item.name)} — ${money(item.price, item.currency)}</option>`).join('');
+  $('#orderEditMessage').textContent = `${serviceLabel} · يمكن تعديل كميات الطلب وملاحظاته والأصناف.`;
+  $('#orderEditDialog').showModal();
+}
+
+async function saveOrderEdits(event) {
+  event.preventDefault();
+  if (!orderEditingDraft || currentRole !== 'admin') return;
+  const rows = [...$('#orderEditRows').querySelectorAll('[data-edit-index]')];
+  const edited = rows.map(row => {
+    const index = Number(row.dataset.editIndex);
+    return { ...orderEditingDraft.items[index], quantity: Math.max(1, Math.min(20, Number(row.querySelector('[data-edit-quantity]')?.value || 1))), note: String(row.querySelector('[data-edit-note]')?.value || '').slice(0, 250) };
+  });
+  if (!edited.length) return $('#orderEditMessage').textContent = 'يجب أن يحتوي الطلب على صنف واحد على الأقل.';
+  const currencies = [...new Set(edited.map(line => line.currency || restaurantSettings.currency || 'ل.س'))];
+  if (currencies.length !== 1) return $('#orderEditMessage').textContent = 'لا يمكن دمج عملات مختلفة في طلب واحد.';
+  edited.forEach(line => { line.subtotal = Number(line.unitPrice || 0) * line.quantity; });
+  const subtotal = edited.reduce((sum, line) => sum + line.subtotal, 0);
+  const serviceType = $('#orderEditService').value;
+  const taxes = (Array.isArray(restaurantSettings.taxes) ? restaurantSettings.taxes : []).filter(tax => tax.enabled !== false && (tax.appliesTo || []).includes(serviceType === 'takeaway' ? 'takeaway' : 'dineIn')).map(tax => ({ id: tax.id, name: tax.name, rate: Number(tax.rate || 0), amount: Math.round(subtotal * Number(tax.rate || 0) / 100) }));
+  const taxTotal = taxes.reduce((sum, tax) => sum + tax.amount, 0);
+  const button = $('#saveOrderEdit'); button.disabled = true;
+  try {
+    await sdk.updateDoc(sdk.doc(db, 'orders', orderEditingDraft.id), { items: edited, serviceType, subtotal, taxes, taxTotal, total: subtotal + taxTotal, currency: currencies[0], updatedAt: sdk.serverTimestamp() });
+    $('#orderEditDialog').close(); orderEditingDraft = null; showToast('تم حفظ تعديل الطلب.');
+  } catch (error) { console.error(error); $('#orderEditMessage').textContent = error.message || 'تعذر حفظ التعديل.'; }
+  finally { button.disabled = false; }
+}
+
+function renderStaff() {
+  if (currentRole !== 'admin') return;
+  $('#staffList').innerHTML = staffMembers.length ? staffMembers.map(member => `
+    <article class="entity-card"><div class="entity-icon">♙</div><div class="entity-copy"><h4>${escapeHtml(member.email || member.uid)}</h4><p>الصلاحيات: ${escapeHtml((member.permissions || []).map(permission => ({ overview: 'نظرة عامة', orders: 'الطلبات', archive: 'الأرشيف' }[permission] || permission)).join('، '))}</p><div class="entity-meta">${member.active === false ? 'موقوف' : 'نشط'}</div></div><div class="entity-actions"><button type="button" class="icon-button delete" data-remove-staff="${escapeHtml(member.uid)}">إلغاء</button></div></article>`).join('') : '<div class="empty-list">لم تتم إضافة موظفين حتى الآن.</div>';
+}
+let staffMembers = [];
+async function loadStaff() {
+  if (currentRole !== 'admin') return;
+  try {
+    const snapshot = await sdk.getDocs(sdk.collection(db, 'staff'));
+    staffMembers = snapshot.docs.map(doc => ({ uid: doc.id, ...doc.data() }));
+    renderStaff();
+  } catch (error) { console.error(error); showToast('تعذر تحميل الموظفين: ' + error.message); }
+}
+
+async function createStaff(event) {
+  event.preventDefault();
+  if (currentRole !== 'admin') return;
+  const email = $('#staffEmail').value.trim().toLowerCase();
+  const password = $('#staffPassword').value;
+  const permissions = [...document.querySelectorAll('[data-staff-permission]:checked')].map(input => input.value);
+  if (!permissions.length) return $('#staffMessage').textContent = 'حدد صلاحية واحدة على الأقل.';
+  const button = $('#createStaffButton'); button.disabled = true; button.textContent = 'جارٍ إنشاء الحساب...';
+  $('#staffMessage').textContent = '';
+  try {
+    const account = await createEmployeeAuthAccount(email, password);
+    await sdk.setDoc(sdk.doc(db, 'staff', account.uid), { uid: account.uid, email: account.email || email, role: 'employee', permissions, active: true, createdAt: sdk.serverTimestamp(), createdBy: currentAdmin.uid });
+    $('#staffForm').reset();
+    $('#staffMessage').textContent = 'تم إنشاء حساب الموظف. يمكنه تسجيل الدخول بالبريد وكلمة المرور المحددين.';
+    showToast('تم إنشاء حساب الموظف.');
+    await loadStaff();
+  } catch (error) {
+    console.error(error);
+    const message = error.code === 'auth/email-already-in-use' ? 'هذا البريد مسجل مسبقًا في Firebase Authentication.' : (error.message || 'تعذر إنشاء الحساب.');
+    $('#staffMessage').textContent = message;
+  } finally { button.disabled = false; button.textContent = 'إنشاء حساب الموظف'; }
+}
+
+async function removeStaff(uid) {
+  const member = staffMembers.find(row => row.uid === uid);
+  if (!member || !confirm(`إلغاء صلاحيات الموظف ${member.email || uid}؟`)) return;
+  try { await sdk.deleteDoc(sdk.doc(db, 'staff', uid)); showToast('تم إلغاء صلاحيات الموظف.'); await loadStaff(); }
+  catch (error) { console.error(error); showToast(error.message || 'تعذر إلغاء الصلاحيات.', 5000); }
 }
 
 $('#loginForm').addEventListener('submit', login);
 $('#settingsForm').addEventListener('submit', saveSettings);
 $('#captureLocation').addEventListener('click', captureRestaurantLocation);
+$('#addTaxButton').addEventListener('click', () => {
+  syncTaxDraftFromDom();
+  taxesDraft.push({ id: crypto.randomUUID ? crypto.randomUUID() : `tax-${Date.now()}`, name: '', rate: 0, appliesTo: ['dineIn', 'takeaway'], enabled: true });
+  renderTaxSettings();
+});
+$('#taxSettingsRows').addEventListener('click', event => {
+  const remove = event.target.closest('[data-remove-tax]');
+  if (!remove) return;
+  syncTaxDraftFromDom();
+  taxesDraft.splice(Number(remove.dataset.removeTax), 1);
+  renderTaxSettings();
+});
 $('#addGroup').addEventListener('click', () => openEntityDialog('group'));
 $('#addCategory').addEventListener('click', () => openEntityDialog('category'));
 $('#addItem').addEventListener('click', () => openEntityDialog('item'));
@@ -429,6 +711,41 @@ $('#itemSearch').addEventListener('input', renderItems);
 $('#itemCategoryFilter').addEventListener('change', renderItems);
 $('#orderFilter').addEventListener('change', renderOrders);
 $('#refreshOrders').addEventListener('click', () => { if (stopOrdersListener) stopOrdersListener(); listenOrders(); showToast('تم تحديث قائمة الطلبات.'); });
+$('#archiveSearch').addEventListener('input', () => { archivePage = 1; renderArchive(); });
+$('#archiveDate').addEventListener('change', () => { archivePage = 1; renderArchive(); });
+$('#refreshArchive').addEventListener('click', loadArchive);
+$('#archivePrev').addEventListener('click', () => { archivePage--; renderArchive(); });
+$('#archiveNext').addEventListener('click', () => { archivePage++; renderArchive(); });
+$('#staffForm').addEventListener('submit', createStaff);
+$('#staffAllPermissions').addEventListener('change', event => {
+  document.querySelectorAll('[data-staff-permission]').forEach(input => { input.checked = event.target.checked; });
+});
+document.querySelectorAll('[data-staff-permission]').forEach(input => input.addEventListener('change', () => {
+  $('#staffAllPermissions').checked = [...document.querySelectorAll('[data-staff-permission]')].every(item => item.checked);
+}));
+$('#staffList').addEventListener('click', event => {
+  const remove = event.target.closest('[data-remove-staff]');
+  if (remove) removeStaff(remove.dataset.removeStaff);
+});
+$('#orderEditForm').addEventListener('submit', saveOrderEdits);
+$('#closeOrderEdit').addEventListener('click', () => $('#orderEditDialog').close());
+$('#cancelOrderEdit').addEventListener('click', () => $('#orderEditDialog').close());
+$('#orderEditRows').addEventListener('click', event => {
+  const remove = event.target.closest('[data-remove-order-line]');
+  if (!remove || !orderEditingDraft) return;
+  orderEditingDraft.items.splice(Number(remove.dataset.removeOrderLine), 1);
+  openOrderEditDialog(orderEditingDraft);
+});
+$('#addOrderItemButton').addEventListener('click', () => {
+  if (!orderEditingDraft) return;
+  const itemId = $('#orderEditAddItem').value;
+  const item = items.find(row => row.id === itemId);
+  if (!item) return showToast('اختر صنفًا أولًا.');
+  const currentCurrency = orderEditingDraft.currency || item.currency || restaurantSettings.currency || 'ل.س';
+  if (currentCurrency !== (item.currency || restaurantSettings.currency || 'ل.س')) return showToast('لا يمكن إضافة صنف بعملة مختلفة عن الطلب.');
+  orderEditingDraft.items.push({ id: item.id, name: item.name, quantity: 1, note: '', unitPrice: Number(item.price || 0), subtotal: Number(item.price || 0), currency: item.currency || restaurantSettings.currency || 'ل.س' });
+  openOrderEditDialog(orderEditingDraft);
+});
 $('#sideNav').addEventListener('click', event => {
   const button = event.target.closest('[data-panel]');
   if (button) switchPanel(button.dataset.panel);
@@ -437,39 +754,42 @@ document.querySelectorAll('[data-goto]').forEach(button => button.addEventListen
 $('#mobileMenu').addEventListener('click', () => $('#sidebar').classList.toggle('open'));
 $('#logoutButton').addEventListener('click', () => sdk.signOut(auth));
 $('#groupsList').addEventListener('click', event => {
-  const edit = event.target.closest('[data-edit="group"]');
-  const remove = event.target.closest('[data-delete="group"]');
+  const edit = event.target.closest('[data-edit="group"]'); const remove = event.target.closest('[data-delete="group"]');
   if (edit) openEntityDialog('group', groups.find(row => row.id === edit.dataset.id));
   if (remove) deleteEntity('group', remove.dataset.id);
 });
 $('#categoriesList').addEventListener('click', event => {
-  const edit = event.target.closest('[data-edit="category"]');
-  const remove = event.target.closest('[data-delete="category"]');
+  const edit = event.target.closest('[data-edit="category"]'); const remove = event.target.closest('[data-delete="category"]');
   if (edit) openEntityDialog('category', categories.find(row => row.id === edit.dataset.id));
   if (remove) deleteEntity('category', remove.dataset.id);
 });
 $('#itemsList').addEventListener('click', event => {
-  const edit = event.target.closest('[data-edit="item"]');
-  const remove = event.target.closest('[data-delete="item"]');
+  const edit = event.target.closest('[data-edit="item"]'); const remove = event.target.closest('[data-delete="item"]');
   if (edit) openEntityDialog('item', items.find(row => row.id === edit.dataset.id));
   if (remove) deleteEntity('item', remove.dataset.id);
+});
+$('#ordersList').addEventListener('click', event => {
+  const edit = event.target.closest('[data-edit-order]');
+  if (edit) openOrderEditDialog(orders.find(row => row.id === edit.dataset.editOrder));
 });
 $('#ordersList').addEventListener('change', async event => {
   const select = event.target.closest('[data-order-status]');
   if (!select) return;
+  const order = orders.find(row => row.id === select.dataset.orderStatus);
+  if (!order) return;
   select.disabled = true;
   try {
-    await sdk.updateDoc(sdk.doc(db, 'orders', select.dataset.orderStatus), {
-      status: select.value,
-      updatedAt: sdk.serverTimestamp()
-    });
-    showToast('تم تحديث حالة الطلب.');
+    if (select.value === 'completed') {
+      await moveOrderToArchive(order);
+      showToast('تم نقل الطلب إلى الأرشيف.');
+    } else {
+      await sdk.updateDoc(sdk.doc(db, 'orders', order.id), { status: select.value, updatedAt: sdk.serverTimestamp() });
+      showToast('تم تحديث حالة الطلب.');
+    }
   } catch (error) {
-    console.error(error);
-    showToast(error.message || 'تعذر تحديث حالة الطلب.', 5000);
-  } finally {
-    select.disabled = false;
-  }
+    console.error(error); showToast(error.message || 'تعذر تحديث الطلب.', 5000);
+    select.value = order.status;
+  } finally { select.disabled = false; }
 });
 
 if (!isFirebaseConfigured) {

@@ -56,9 +56,13 @@ export async function onRequestPost({ request, env }) {
   const orderNumber = String(data.orderNumber || '').trim();
   const items = Array.isArray(data.items) ? data.items : [];
   const total = Number(data.total);
+  const subtotal = Number(data.subtotal ?? total);
+  const taxTotal = Number(data.taxTotal ?? 0);
+  const taxes = Array.isArray(data.taxes) ? data.taxes : [];
+  const serviceType = data.serviceType === 'takeaway' ? 'سفري' : 'محلي داخل المطعم';
   const currency = String(data.currency || '').trim().slice(0, 12);
   if (!orderNumber || orderNumber.length > 40 || phone.length < 7 || phone.length > 24
-      || items.length < 1 || items.length > 30 || !Number.isFinite(total) || total < 0 || !currency) {
+      || items.length < 1 || items.length > 30 || !Number.isFinite(total) || total < 0 || !Number.isFinite(subtotal) || subtotal < 0 || !Number.isFinite(taxTotal) || taxTotal < 0 || !currency) {
     return json({ ok: false, error: 'بيانات الطلب ناقصة أو غير صالحة.' }, 400, headers);
   }
 
@@ -86,11 +90,15 @@ export async function onRequestPost({ request, env }) {
     `🍽️ <b>طلب جديد — ${restaurantName}</b>`,
     `🧾 <b>رقم الطلب:</b> <code>${escapeHtml(orderNumber)}</code>`,
     `📞 <b>هاتف العميل:</b> <code>${escapeHtml(phone)}</code>`,
+    `🍴 <b>نوع الطلب:</b> ${serviceType}`,
     '',
     '<b>تفاصيل الطلب:</b>',
     lines.join('\n'),
     ...(items.length > 12 ? [`… وهناك ${items.length - 12} صنف إضافي في الطلب.`] : []),
     '',
+    `المجموع الفرعي: ${escapeHtml(subtotal.toLocaleString('en-US'))} ${escapeHtml(currency)}` ,
+    ...taxes.slice(0, 10).map(tax => `• ${escapeHtml(String(tax.name || 'رسم'))} (${escapeHtml(Number(tax.rate || 0))}%): ${escapeHtml(Number(tax.amount || 0).toLocaleString('en-US'))} ${escapeHtml(currency)}`),
+    `إجمالي الرسوم: ${escapeHtml(taxTotal.toLocaleString('en-US'))} ${escapeHtml(currency)}`,
     `💰 <b>الإجمالي:</b> ${escapeHtml(total.toLocaleString('en-US'))} ${escapeHtml(currency)}`,
     mapLine
   ].filter(Boolean).join('\n');
