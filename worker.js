@@ -90,7 +90,7 @@ async function handleTelegram(request, env) {
     }
 
     lines.push(
-      `• ${escapeHtml(name)} × ${quantity} — ${escapeHtml(subtotal.toLocaleString("en-US"))} ${escapeHtml(currency)}${note ? `\\n  ملاحظة: ${escapeHtml(note)}` : ""}`
+      `• ${escapeHtml(name)} × ${quantity} — ${escapeHtml(subtotal.toLocaleString("en-US"))} ${escapeHtml(currency)}${note ? `\n  ملاحظة: ${escapeHtml(note)}` : ""}`
     );
   }
 
@@ -100,7 +100,7 @@ async function handleTelegram(request, env) {
   const lng = Number(location.longitude);
   const distance = Number(location.distanceMeters);
   const mapLine = Number.isFinite(lat) && Number.isFinite(lng)
-    ? `\\n📍 <a href="https://maps.google.com/?q=${lat},${lng}">عرض موقع العميل</a> (المسافة المحسوبة: ${Math.round(distance || 0)} م)`
+    ? `\n📍 <a href="https://maps.google.com/?q=${lat},${lng}">عرض موقع العميل</a> (المسافة المحسوبة: ${Math.round(distance || 0)} م)`
     : "";
 
   const message = [
