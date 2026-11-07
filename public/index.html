@@ -1,0 +1,110 @@
+<!doctype html>
+<html lang="ar" dir="rtl">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#080b10">
+  <meta name="description" content="المنيو الإلكتروني لمطعم TechBuilders. تصفح القائمة وأرسل طلبك من داخل المطعم.">
+  <title>TechBuilders | المنيو الإلكتروني</title>
+  <link rel="icon" href="./assets/techbuilders-logo.jpg">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Alexandria:wght@300;400;500;600;700;800&family=Amiri:wght@400;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="./css/styles.css">
+</head>
+<body>
+  <header class="site-header">
+    <a class="brand" href="./" aria-label="TechBuilders الصفحة الرئيسية">
+      <img src="./assets/techbuilders-logo.jpg" alt="شعار TechBuilders">
+      <span><b id="restaurantName">TECHBUILDERS</b><small>THE DIGITAL MENU</small></span>
+    </a>
+    <div class="header-actions">
+      <a class="admin-shortcut" href="./admin.html" aria-label="صفحة المسؤول">المسؤول</a>
+      <button class="cart-trigger" id="openCart" type="button" aria-label="فتح السلة">
+        <span class="cart-symbol">▤</span><span class="cart-label">السلة</span><b id="cartCount">0</b>
+      </button>
+    </div>
+  </header>
+
+  <main class="page-wrap">
+    <section class="intro-row">
+      <div>
+        <div class="eyebrow"><span></span> MENU · FRESHLY PREPARED</div>
+        <h1>اختَر ما <em>تحب.</em></h1>
+        <p class="intro-copy">تصفّح قائمتنا، افتح صفحة الوجبة، وأضفها إلى سلتك بكل سهولة.</p>
+      </div>
+      <div class="intro-mark" aria-hidden="true">TB<span>✳</span></div>
+    </section>
+
+    <section class="menu-section" aria-label="المنيو الإلكتروني">
+      <div class="menu-controls">
+        <div class="main-group-heading">
+          <span class="section-label">القائمة الرئيسية</span>
+          <h2 id="bookHeading">المنيو</h2>
+        </div>
+        <div class="group-tabs" id="groupTabs" aria-label="الأقسام الرئيسية"></div>
+      </div>
+      <div class="sub-category-row">
+        <span class="sub-category-label">تصفّح التصنيفات</span>
+        <nav id="categoryTabs" class="category-tabs" aria-label="التصنيفات الفرعية"></nav>
+      </div>
+
+      <div class="book-frame" id="bookFrame">
+        <div class="book-edge"></div>
+        <aside class="book-left-page">
+          <div class="left-page-top"><span>TB / MENU</span><span>EST. 2026</span></div>
+          <div class="left-page-center">
+            <img src="./assets/techbuilders-logo.jpg" alt="" class="left-page-logo">
+            <span class="left-page-kicker">A MENU MADE FOR YOU</span>
+            <strong>كل صفحة<br>لها <em>حكاية.</em></strong>
+            <p>اختر من قائمتنا، اكتشف المكونات، وأرسل طلبك مباشرة من طاولتك.</p>
+          </div>
+          <div class="left-page-bottom"><span>TECHBUILDERS</span><span>01 — 26</span></div>
+        </aside>
+        <section class="book-right-page" aria-live="polite">
+          <div class="right-page-top"><span id="pageSectionLabel">OUR MENU</span><span id="pageCounter">01 / 01</span></div>
+          <div id="bookContent" class="book-content">
+            <div class="empty-state"><span class="loader"></span><p>جاري تحميل المنيو...</p></div>
+          </div>
+          <div class="right-page-bottom"><span>MADE WITH CARE</span><div class="page-controls"><button id="prevPage" type="button" aria-label="الصفحة السابقة" disabled>‹</button><button id="nextPage" type="button" aria-label="الصفحة التالية" disabled>›</button></div></div>
+        </section>
+        <div class="book-spine" aria-hidden="true"></div>
+      </div>
+      <p class="book-hint"><span>↔</span> تنقّل بين صفحات المنيو باستخدام الأسهم أو اسحب على الهاتف</p>
+    </section>
+
+    <section class="entry-strip" id="entryStrip">
+      <div class="entry-icon">⌖</div>
+      <div class="entry-copy"><b id="entryTitle">الطلب متاح من داخل المطعم فقط</b><span id="entryDescription">فعّل موقع هاتفك للتحقق من وجودك داخل المطعم قبل إرسال الطلب.</span></div>
+      <span id="entryState" class="entry-state">غير مفعّل</span>
+    </section>
+
+    <footer class="site-footer">
+      <div class="footer-brand"><img src="./assets/techbuilders-logo.jpg" alt="TechBuilders"><span><b>TECHBUILDERS</b><small>THE DIGITAL MENU</small></span></div>
+      <p id="footerMessage">ننتظركم دائمًا. نتمنى لكم تجربة لذيذة.</p>
+      <span class="footer-copy">© <span id="yearNow"></span> TechBuilders</span>
+    </footer>
+  </main>
+
+  <div class="cart-backdrop" id="cartBackdrop" hidden></div>
+  <aside class="cart-drawer" id="cartDrawer" aria-label="سلة الطلب" aria-hidden="true">
+    <div class="drawer-head"><div><span class="section-label">YOUR ORDER</span><h2>سلة الطلب</h2></div><button class="close-btn" id="closeCart" type="button" aria-label="إغلاق">×</button></div>
+    <div class="cart-lines" id="cartLines"><div class="cart-empty"><span>▤</span><b>السلة فارغة</b><p>أضف وجباتك المفضلة من المنيو.</p></div></div>
+    <div class="cart-checkout">
+      <div class="total-row"><span>الإجمالي</span><strong id="cartTotal">0 ل.س</strong></div>
+      <label class="field-label" for="customerPhone">رقم الهاتف للتواصل</label>
+      <input id="customerPhone" type="tel" inputmode="tel" autocomplete="tel" placeholder="مثال: 09xxxxxxxx" maxlength="24">
+      <div class="gate-box" id="gateBox">
+        <div class="gate-box-icon">⌖</div>
+        <div><b id="gateBoxTitle">الطلب من داخل المطعم فقط</b><p id="gateBoxText">تحقق من موقع هاتفك قبل إرسال الطلب.</p></div>
+        <button id="verifyEntry" type="button" class="verify-btn">تحقق من موقعي</button>
+      </div>
+      <button class="send-order-btn" id="sendOrder" type="button" disabled>إرسال الطلب <span>←</span></button>
+      <p class="checkout-footnote">يُسجّل الطلب بالأسعار الظاهرة في المنيو وقت الإرسال.</p>
+    </div>
+  </aside>
+
+  <div class="toast" id="toast" role="status" aria-live="polite"></div>
+  <script type="module" src="./js/app.js"></script>
+</body>
+</html>

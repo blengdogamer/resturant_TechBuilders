@@ -1,0 +1,132 @@
+<!doctype html>
+<html lang="ar" dir="rtl">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#080b10">
+  <title>إدارة TechBuilders</title>
+  <link rel="icon" href="./assets/techbuilders-logo.jpg">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Alexandria:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="./css/admin.css">
+</head>
+<body class="admin-body">
+  <section class="login-screen" id="loginScreen">
+    <div class="login-card">
+      <a href="./" class="back-link">← العودة إلى المنيو</a>
+      <img src="./assets/techbuilders-logo.jpg" class="login-logo" alt="TechBuilders">
+      <span class="login-kicker">TECHBUILDERS / CONTROL</span>
+      <h1>إدارة <em>المطعم.</em></h1>
+      <p>سجّل الدخول بحساب المسؤول الموجود في Firebase Authentication.</p>
+      <form id="loginForm">
+        <label>البريد الإلكتروني<input id="loginEmail" type="email" autocomplete="username" required placeholder="name@example.com" dir="ltr"></label>
+        <label>كلمة المرور<input id="loginPassword" type="password" autocomplete="current-password" required placeholder="••••••••"></label>
+        <button class="primary-button" id="loginButton" type="submit">دخول لوحة الإدارة <span>←</span></button>
+      </form>
+      <div class="login-error" id="loginError" role="alert"></div>
+      <div class="login-footnote">لا يوجد إنشاء حساب من هذه الصفحة. أضف المسؤولين يدويًا إلى مجموعة admins في Firestore.</div>
+    </div>
+  </section>
+
+  <div class="admin-app" id="adminApp" hidden>
+    <aside class="sidebar" id="sidebar">
+      <a class="admin-brand" href="./"><img src="./assets/techbuilders-logo.jpg" alt=""><span><b>TECHBUILDERS</b><small>RESTAURANT CONTROL</small></span></a>
+      <div class="sidebar-user"><div class="user-avatar">TB</div><span><b id="adminEmailLabel">المسؤول</b><small>ADMINISTRATOR</small></span></div>
+      <nav class="side-nav" id="sideNav">
+        <button class="active" data-panel="overview"><i>◫</i>نظرة عامة</button>
+        <button data-panel="groups"><i>▤</i>الأقسام الرئيسية</button>
+        <button data-panel="categories"><i>☷</i>التصنيفات الفرعية</button>
+        <button data-panel="items"><i>✦</i>الوجبات والأصناف</button>
+        <button data-panel="orders"><i>▧</i>الطلبات <b id="pendingCount">0</b></button>
+        <button data-panel="settings"><i>⚙</i>إعدادات المطعم</button>
+      </nav>
+      <div class="sidebar-bottom"><a href="./" target="_blank">فتح المنيو ↗</a><button id="logoutButton">تسجيل الخروج</button></div>
+    </aside>
+
+    <main class="admin-main">
+      <header class="topbar">
+        <button class="mobile-menu" id="mobileMenu" type="button" aria-label="القائمة">☰</button>
+        <div><span class="top-kicker">TECHBUILDERS / MANAGEMENT</span><h2 id="panelTitle">نظرة عامة</h2></div>
+        <a class="view-site" href="./" target="_blank">عرض المنيو ↗</a>
+      </header>
+
+      <section class="panel active" id="panel-overview">
+        <div class="welcome-card"><div><span>مرحبًا بك في لوحة الإدارة</span><h3>قائمتك، <em>تحت سيطرتك.</em></h3><p>أدر أقسام المنيو ووجباته، وتابع الطلبات الواردة.</p></div><div class="welcome-monogram">TB</div></div>
+        <div class="stat-grid">
+          <article><span>الأقسام الرئيسية</span><b id="statGroups">0</b><small>المجموعات الظاهرة</small></article>
+          <article><span>التصنيفات الفرعية</span><b id="statCategories">0</b><small>تصنيفات المنيو</small></article>
+          <article><span>الوجبات</span><b id="statItems">0</b><small>الأصناف المضافة</small></article>
+          <article><span>طلبات قيد الانتظار</span><b id="statPending">0</b><small>تحتاج متابعة</small></article>
+        </div>
+        <div class="content-card"><div class="card-heading"><div><span>RECENT ACTIVITY</span><h3>أحدث الطلبات</h3></div><button class="text-button" data-goto="orders">كل الطلبات ←</button></div><div id="recentOrders" class="orders-list compact-list"></div></div>
+        <div class="quick-grid"><button data-goto="groups"><b>＋</b><strong>إضافة قسم رئيسي</strong><small>مثال: المأكولات والمشروبات</small></button><button data-goto="categories"><b>＋</b><strong>إضافة تصنيف فرعي</strong><small>اربط التصنيف بقسم رئيسي</small></button><button data-goto="items"><b>＋</b><strong>إضافة وجبة</strong><small>اسم وصورة ومكونات وسعر</small></button></div>
+      </section>
+
+      <section class="panel" id="panel-groups">
+        <div class="panel-heading"><div><span>MENU STRUCTURE / LEVEL 01</span><h3>الأقسام الرئيسية</h3><p>تظهر كعناوين رئيسية أعلى صفحات كتاب المنيو.</p></div><button class="primary-button small" id="addGroup">＋ إضافة قسم</button></div>
+        <div id="groupsList" class="entity-list"></div>
+      </section>
+
+      <section class="panel" id="panel-categories">
+        <div class="panel-heading"><div><span>MENU STRUCTURE / LEVEL 02</span><h3>التصنيفات الفرعية</h3><p>كل تصنيف فرعي يتبع قسمًا رئيسيًا محددًا.</p></div><button class="primary-button small" id="addCategory">＋ إضافة تصنيف</button></div>
+        <div id="categoriesList" class="entity-list"></div>
+      </section>
+
+      <section class="panel" id="panel-items">
+        <div class="panel-heading"><div><span>MENU CONTENT</span><h3>الوجبات والأصناف</h3><p>أضف صورة الوجبة كرابط مباشر، واكتب الوصف والمكونات والسعر.</p></div><button class="primary-button small" id="addItem">＋ إضافة وجبة</button></div>
+        <div class="toolbar"><input id="itemSearch" type="search" placeholder="ابحث باسم الوجبة..."><select id="itemCategoryFilter"><option value="all">كل التصنيفات</option></select></div>
+        <div id="itemsList" class="entity-list"></div>
+      </section>
+
+      <section class="panel" id="panel-orders">
+        <div class="panel-heading"><div><span>LIVE ORDERS</span><h3>طلبات العملاء</h3><p>تصل الطلبات الجديدة تلقائيًا عند تسجيلها في Firestore.</p></div><button class="outline-button small" id="refreshOrders">↻ تحديث</button></div>
+        <div class="toolbar"><select id="orderFilter"><option value="all">كل الحالات</option><option value="pending">قيد الانتظار</option><option value="accepted">تم القبول</option><option value="preparing">قيد التحضير</option><option value="ready">جاهز</option><option value="completed">مكتمل</option><option value="cancelled">ملغي</option></select></div>
+        <div id="ordersList" class="orders-list"></div>
+      </section>
+
+      <section class="panel" id="panel-settings">
+        <div class="panel-heading"><div><span>RESTAURANT SETTINGS</span><h3>إعدادات المطعم</h3><p>اسم المطعم، الرسالة، وموقع GPS المستخدم للتحقق من الطلبات.</p></div></div>
+        <div class="settings-grid">
+          <form id="settingsForm" class="content-card settings-form">
+            <div class="card-heading"><div><span>GENERAL</span><h3>المعلومات الأساسية</h3></div></div>
+            <label>اسم المطعم<input id="settingName" required maxlength="80" value="TECHBUILDERS"></label>
+            <label>رسالة أسفل المنيو<textarea id="settingFooter" rows="3" maxlength="250">ننتظركم دائمًا. نتمنى لكم تجربة لذيذة.</textarea></label>
+            <div class="form-two"><label>العملة الافتراضية<input id="settingCurrency" maxlength="12" value="ل.س"></label><label>نطاق التحقق بالمتر<input id="settingRadius" type="number" min="25" max="500" value="100" required></label></div>
+            <label>عنوان المطعم<input id="settingAddress" maxlength="180" placeholder="المدينة، الشارع، العنوان"></label>
+            <div class="form-two"><label>Latitude<input id="settingLat" type="number" step="any" placeholder="33.5138"></label><label>Longitude<input id="settingLng" type="number" step="any" placeholder="36.2765"></label></div>
+            <button type="button" class="outline-button full" id="captureLocation">⌖ استخدام موقعي الحالي كنقطة المطعم</button>
+            <p class="help-note">التقط الإحداثيات وأنت داخل المطعم. نطاق 80–150 مترًا غالبًا مناسب بحسب دقة GPS وطبيعة المبنى.</p>
+            <button class="primary-button" type="submit">حفظ الإعدادات</button>
+            <div class="form-message" id="settingsMessage"></div>
+          </form>
+
+          <div class="content-card location-settings-card">
+            <div class="card-heading"><div><span>LOCATION CHECK</span><h3>التحقق من موقع العميل</h3></div><span class="live-pill">GPS</span></div>
+            <p>لا يوجد QR ولا رمز مؤقت. عندما يفتح العميل السلة يضغط «تحقق من موقعي»، ويقارن الموقع الحالي بإحداثيات المطعم ونطاق التحقق المحدد أعلاه.</p>
+            <div class="location-info-list">
+              <div><b>1</b><span>حدد موقع المطعم من هاتفك وأنت داخله.</span></div>
+              <div><b>2</b><span>احفظ خط العرض والطول ونطاق المسافة بالمتر.</span></div>
+              <div><b>3</b><span>العميل يسمح بتحديد موقعه قبل إرسال الطلب.</span></div>
+            </div>
+            <div class="help-note security-note">ملاحظة: تحقق GPS في المتصفح مناسب كحاجز بسيط، لكنه ليس إثباتًا أمنيًا مطلقًا؛ يمكن تزوير الموقع على بعض الأجهزة المعدّلة.</div>
+          </div>
+        </div>
+      </section>
+
+      <div class="admin-toast" id="adminToast" role="status"></div>
+    </main>
+  </div>
+
+  <dialog id="entityDialog" class="entity-dialog">
+    <form id="entityForm" method="dialog">
+      <div class="dialog-head"><div><span id="dialogKicker">MENU EDITOR</span><h3 id="dialogTitle">إضافة</h3></div><button type="button" class="dialog-close" id="closeDialog">×</button></div>
+      <div id="dialogFields" class="dialog-fields"></div>
+      <div class="dialog-actions"><button type="button" class="outline-button" id="cancelDialog">إلغاء</button><button type="submit" class="primary-button" id="saveEntity">حفظ</button></div>
+      <div id="dialogError" class="form-message"></div>
+    </form>
+  </dialog>
+
+  <script type="module" src="./js/admin.js"></script>
+</body>
+</html>

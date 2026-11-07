@@ -1,0 +1,106 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    function signedIn() {
+      return request.auth != null;
+    }
+
+    function isAdmin() {
+      return signedIn() && (
+        (request.auth.token.email is string
+          && exists(/databases/$(database)/documents/admins/$(request.auth.token.email.lower()))
+          && get(/databases/$(database)/documents/admins/$(request.auth.token.email.lower())).data.role == 'admin')
+        || (exists(/databases/$(database)/documents/admins/$(request.auth.uid))
+          && get(/databases/$(database)/documents/admins/$(request.auth.uid)).data.role == 'admin')
+      );
+    }
+
+    function isGuest() {
+      return signedIn() && request.auth.token.firebase.sign_in_provider == 'anonymous';
+    }
+
+    function validGuestOrder() {
+      return isGuest()
+        && request.resource.data.keys().hasAll([
+          'orderNumber', 'phone', 'items', 'total', 'currency',
+          'status', 'customerUid', 'location', 'createdAt'
+        ])
+        && request.resource.data.keys().hasOnly([
+          'orderNumber', 'phone', 'items', 'total', 'currency',
+          'status', 'customerUid', 'location', 'createdAt'
+        ])
+        && request.resource.data.orderNumber is string
+        && request.resource.data.orderNumber.size() >= 5
+        && request.resource.data.orderNumber.size() <= 40
+        && request.resource.data.phone is string
+        && request.resource.data.phone.size() >= 7
+        && request.resource.data.phone.size() <= 24
+        && request.resource.data.items is list
+        && request.resource.data.items.size() > 0
+        && request.resource.data.items.size() <= 30
+        && request.resource.data.total is number
+        && request.resource.data.total >= 0
+        && request.resource.data.currency is string
+        && request.resource.data.currency.size() <= 12
+        && request.resource.data.status == 'pending'
+        && request.resource.data.customerUid == request.auth.uid
+        && request.resource.data.location is map
+        && request.resource.data.location.latitude is number
+        && request.resource.data.location.latitude >= -90
+        && request.resource.data.location.latitude <= 90
+        && request.resource.data.location.longitude is number
+        && request.resource.data.location.longitude >= -180
+        && request.resource.data.location.longitude <= 180
+        && request.resource.data.location.accuracy is number
+        && request.resource.data.location.accuracy >= 0
+        && request.resource.data.location.accuracy <= 250
+        && request.resource.data.location.distanceMeters is number
+        && request.resource.data.location.distanceMeters >= 0
+        && request.resource.data.location.distanceMeters <= 500
+        && request.resource.data.location.checkedAt is string
+        && request.resource.data.createdAt == request.time;
+    }
+
+    match /admins/{emailOrUid} {
+      allow get: if signedIn() && (
+        (request.auth.token.email is string && emailOrUid == request.auth.token.email.lower())
+        || emailOrUid == request.auth.uid
+      );
+      allow list: if isAdmin();
+      allow create, update, delete: if false;
+    }
+
+    match /settings/{settingId} {
+      allow read: if settingId == 'restaurant';
+      allow write: if isAdmin();
+    }
+
+    match /menuGroups/{groupId} {
+      allow read: if isAdmin() || resource.data.active == true;
+      allow create, update, delete: if isAdmin();
+    }
+
+    match /categories/{categoryId} {
+      allow read: if isAdmin() || resource.data.active == true;
+      allow create, update, delete: if isAdmin();
+    }
+
+    match /menuItems/{itemId} {
+      allow read: if isAdmin() || resource.data.active == true;
+      allow create, update, delete: if isAdmin();
+    }
+
+    match /orders/{orderId} {
+      allow read: if isAdmin();
+      allow create: if validGuestOrder();
+      allow update: if isAdmin()
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['status', 'updatedAt'])
+        && request.resource.data.status in ['pending', 'accepted', 'preparing', 'ready', 'completed', 'cancelled'];
+      allow delete: if isAdmin();
+    }
+
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}
