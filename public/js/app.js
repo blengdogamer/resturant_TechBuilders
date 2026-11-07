@@ -491,7 +491,7 @@ async function submitOrder() {
       const sequence = (counterSnapshot.exists() ? Number(counterSnapshot.data().count || 0) : 0) + 1;
       const number = displayOrderNumber(dayKey, sequence);
       transaction.set(counterRef, { date: dayKey, count: sequence, lastOrderId: orderRef.id, updatedAt: sdk.serverTimestamp() });
-      transaction.set(orderRef, { ...orderBase, orderNumber, counterValue: sequence });
+      transaction.set(orderRef, { ...orderBase, orderNumber: number, counterValue: sequence });
       return number;
     });
 
