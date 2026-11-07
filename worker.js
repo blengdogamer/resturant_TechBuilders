@@ -44,7 +44,11 @@ async function handleTelegram(request, env) {
   if (method === "GET") {
     return json({
       ok: true,
-      telegramConfigured: Boolean(env.TELEGRAM_BOT_TOKEN && env.TELEGRAM_CHAT_ID)
+      telegramConfigured: Boolean(env.TELEGRAM_BOT_TOKEN && env.TELEGRAM_CHAT_ID),
+      diagnostics: {
+        tokenPresent: Boolean(env.TELEGRAM_BOT_TOKEN),
+        chatIdPresent: Boolean(env.TELEGRAM_CHAT_ID)
+      }
     });
   }
 
