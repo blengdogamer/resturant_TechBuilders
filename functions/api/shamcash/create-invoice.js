@@ -64,8 +64,27 @@ export async function onRequestPost({ request, env }) {
     const amount = Number(order.total);
     const currency = String(order.currency || '').trim();
     if (!Number.isFinite(amount) || amount <= 0 || !['ل.س', 'SYP'].includes(currency)) return json({ ok: false, error: 'شام كاش في هذا الربط يقبل فواتير الليرة السورية فقط (SYP).' }, 400, headers);
+    // The dashboard's receiving address is not the API linked-account ID.
+    // Resolve the configured address against GET /accounts, then send the stable account.id.
+    const accountsResponse = await fetch('https://api.shamcash-api.com/v1/accounts', {
+      headers: { Authorization: `Bearer ${env.SHAMCASH_API_TOKEN}`, Accept: 'application/json' }
+    });
+    const accountsPayload = await accountsResponse.json().catch(() => ({}));
+    if (!accountsResponse.ok || accountsPayload.status !== 'success') {
+      return json({ ok: false, error: `تعذر جلب حسابات شام كاش: ${accountsPayload.code || ''} ${accountsPayload.message || ''}`.trim() }, accountsResponse.status || 502, headers);
+    }
+    const accounts = Array.isArray(accountsPayload.data) ? accountsPayload.data : (accountsPayload.data ? [accountsPayload.data] : []);
+    const configuredAccount = String(shamcash.accountId).trim();
+    const linkedAccount = accounts.find(account =>
+      [account.id, account.address, account.qr_payload].some(value => String(value || '').trim() === configuredAccount)
+    ) || (accounts.length === 1 ? accounts[0] : null);
+    if (!linkedAccount?.id) {
+      return json({ ok: false, error: accounts.length > 1
+        ? 'تعذر مطابقة عنوان الاستقبال مع حساب API. أدخل account_id الذي يظهر في GET /accounts، أو اربط حساب استقبال واحد فقط.'
+        : 'عنوان الاستقبال غير مرتبط بحساب API ضمن هذا المفتاح. تحقق من ربط الحساب في لوحة ShamCash API.' }, 404, headers);
+    }
     const invoiceBody = {
-      account_id: String(shamcash.accountId).trim(),
+      account_id: String(linkedAccount.id),
       amount: String(Math.round(amount)),
       currency: 'SYP',
       payment_note: String(order.orderNumber),
