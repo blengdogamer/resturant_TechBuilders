@@ -356,7 +356,12 @@ async function verifyShamcashPayment(order, archive = false) {
 
 function renderOrders() {
   const selectedStatus = $('#orderFilter').value || 'all';
-  const rows = orders.filter(order => order.status !== 'completed' && (selectedStatus === 'all' || order.status === selectedStatus));
+  // Do not expose unpaid ShamCash checkout drafts as restaurant orders.
+  const rows = orders.filter(order =>
+    order.status !== 'completed' &&
+    !(order.payment?.method === 'shamcash' && order.payment?.status !== 'paid') &&
+    (selectedStatus === 'all' || order.status === selectedStatus)
+  );
   const html = rows.length ? rows.map(order => `
     <article class="order-card">
       <div class="order-head"><div><div class="order-id">${escapeHtml(order.orderNumber || order.id)}</div><div class="order-time">${formatDate(order.createdAt)} · ${order.serviceType === 'takeaway' ? 'سفري' : 'محلي'}</div></div><div class="order-phone">${escapeHtml(order.phone || '')}</div></div>
