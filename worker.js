@@ -1,3 +1,6 @@
+import { onRequestPost as createShamcashInvoice, onRequestOptions as createShamcashOptions } from "./functions/api/shamcash/create-invoice.js";
+import { onRequestPost as getShamcashInvoiceStatus, onRequestOptions as invoiceStatusOptions } from "./functions/api/shamcash/invoice-status.js";
+
 function json(data, status = 200, headers = {}) {
   return new Response(JSON.stringify(data), {
     status,
@@ -152,6 +155,25 @@ export default {
 
     if (url.pathname === "/api/send-order") {
       return handleTelegram(request, env);
+    }
+
+    // ShamCash endpoints are Pages-Functions-style modules, so route them
+    // explicitly when running this project as a Cloudflare Worker.
+    if (url.pathname === "/api/shamcash/create-invoice" ||
+        url.pathname === "/api/shamcash/invoice-status") {
+      const shamcashEnv = { ...env, ALLOWED_ORIGIN: url.origin };
+      const isCreate = url.pathname === "/api/shamcash/create-invoice";
+      if (request.method === "OPTIONS") {
+        return isCreate
+          ? createShamcashOptions({ request, env: shamcashEnv })
+          : invoiceStatusOptions({ request, env: shamcashEnv });
+      }
+      if (request.method !== "POST") {
+        return json({ ok: false, error: "Method not allowed" }, 405, { Allow: "POST, OPTIONS" });
+      }
+      return isCreate
+        ? createShamcashInvoice({ request, env: shamcashEnv })
+        : getShamcashInvoiceStatus({ request, env: shamcashEnv });
     }
 
     // Serve the existing restaurant website from the public/ folder.
