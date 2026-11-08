@@ -95,6 +95,14 @@
         <button type="button" data-service-type="dineIn" class="active" aria-pressed="true">محلي داخل المطعم</button>
         <button type="button" data-service-type="takeaway" aria-pressed="false">سفري</button>
       </div>
+      <div class="payment-method-picker" id="paymentMethodPicker" aria-label="طريقة الدفع">
+        <span class="payment-picker-title">طريقة الدفع</span>
+        <div class="payment-method-options">
+          <button type="button" data-payment-method="cash" class="active" aria-pressed="true">الدفع عند الاستلام</button>
+          <button type="button" data-payment-method="shamcash" hidden aria-pressed="false">شام كاش</button>
+        </div>
+        <small id="shamcashPaymentHint" hidden>ستظهر فاتورة شام كاش بعد تأكيد الطلب.</small>
+      </div>
       <div class="price-breakdown">
         <div class="total-row"><span>المجموع الفرعي</span><strong id="cartSubtotal">0 ل.س</strong></div>
         <div id="cartTaxLines"></div>
@@ -112,6 +120,20 @@
     </div>
   </aside>
 
+  <dialog id="shamcashPaymentDialog" class="shamcash-payment-dialog">
+    <div class="payment-dialog-head"><span>SHAM CASH / PAYMENT</span><button type="button" id="closeShamcashDialog" aria-label="إغلاق">×</button></div>
+    <div class="payment-dialog-content">
+      <div class="payment-success-mark">✓</div>
+      <h2>تم تجهيز فاتورة الدفع</h2>
+      <p>طلبك مسجل، أكمل الدفع عبر شام كاش من الرابط التالي.</p>
+      <div class="payment-invoice-number"><small>رقم الطلب</small><b id="shamcashOrderNumber">—</b></div>
+      <div class="payment-invoice-number"><small>المبلغ المطلوب</small><b id="shamcashAmount">—</b></div>
+      <div class="payment-invoice-number"><small>ملاحظة التحويل</small><b id="shamcashPaymentNote">—</b></div>
+      <a id="shamcashPayLink" class="send-order-btn payment-link-button" href="#" target="_blank" rel="noopener noreferrer">فتح فاتورة شام كاش ↗</a>
+      <p class="payment-dialog-footnote" id="shamcashExpiresAt"></p>
+      <button type="button" class="outline-button full" id="closeShamcashDialogBottom">إغلاق</button>
+    </div>
+  </dialog>
   <div class="toast" id="toast" role="status" aria-live="polite"></div>
   <script type="module" src="./js/app.js"></script>
 </body>

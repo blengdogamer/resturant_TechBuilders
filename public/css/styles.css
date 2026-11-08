@@ -116,3 +116,23 @@
 .tax-row strong{color:#c3cfdd;font-size:9px}
 .price-breakdown .grand-total{border-top:1px solid var(--line);padding-top:9px;margin:9px 0 0;color:#fff;font-weight:700}
 .price-breakdown .grand-total strong{font-size:16px;color:var(--blue2)}
+
+
+/* v5: ShamCash checkout selector and hosted-invoice dialog */
+.payment-method-picker{margin:0 0 13px;padding:10px 12px;border:1px solid var(--line);border-radius:11px;background:rgba(255,255,255,.025)}
+.payment-picker-title{display:block;font-size:10px;font-weight:700;margin-bottom:8px;color:#e7edf5}
+.payment-method-options{display:grid;grid-template-columns:1fr 1fr;gap:8px}
+.payment-method-options button{min-height:40px;border:1px solid #2b3a4b;border-radius:9px;background:#0b121b;color:#aebaca;font-size:10px;padding:7px}
+.payment-method-options button.active{background:var(--blue);border-color:var(--blue);color:white}
+#shamcashPaymentHint{display:block;margin-top:7px;font-size:9px;color:#8c9caf}
+.shamcash-payment-dialog{width:min(440px,calc(100% - 24px));padding:0;border:1px solid #34465c;border-radius:18px;background:#0e1722;color:#f5f7fa;box-shadow:0 24px 90px #000a}
+.shamcash-payment-dialog::backdrop{background:#02060bd9;backdrop-filter:blur(4px)}
+.payment-dialog-head{display:flex;justify-content:space-between;align-items:center;padding:14px 18px;border-bottom:1px solid var(--line);font-size:9px;letter-spacing:.14em;color:#8ba0b8}
+.payment-dialog-head button{width:32px;height:32px;border:0;border-radius:50%;background:#1d2937;color:white;font-size:22px}
+.payment-dialog-content{padding:22px;text-align:center}
+.payment-success-mark{width:48px;height:48px;margin:0 auto 12px;display:grid;place-items:center;border-radius:50%;background:#153b2d;color:#7ce0ad;font-size:25px}
+.payment-dialog-content h2{font-size:19px;margin:0 0 8px}.payment-dialog-content>p{font-size:11px;line-height:1.8;color:#a9b5c5}
+.payment-invoice-number{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:10px 12px;border:1px solid var(--line);border-radius:9px;margin:8px 0;text-align:right}
+.payment-invoice-number small{font-size:10px;color:#8d9caf}.payment-invoice-number b{font-size:12px;direction:ltr}
+.payment-link-button{display:flex;align-items:center;justify-content:center;margin:16px 0 8px;min-height:49px}
+.payment-dialog-content .payment-dialog-footnote{font-size:9px;color:#8392a5}.payment-dialog-content .outline-button{margin-top:9px}

@@ -37,17 +37,17 @@ service cloud.firestore {
       return isGuest()
         && request.resource.data.keys().hasAll([
           'orderNumber', 'phone', 'items', 'subtotal', 'taxes', 'taxTotal', 'total', 'currency',
-          'serviceType', 'status', 'customerUid', 'counterDate', 'counterValue', 'location', 'createdAt'
+          'serviceType', 'paymentMethod', 'payment', 'status', 'customerUid', 'counterDate', 'counterValue', 'location', 'createdAt'
         ])
         && request.resource.data.keys().hasOnly([
           'orderNumber', 'phone', 'items', 'subtotal', 'taxes', 'taxTotal', 'total', 'currency',
-          'serviceType', 'status', 'customerUid', 'counterDate', 'counterValue', 'location', 'createdAt'
+          'serviceType', 'paymentMethod', 'payment', 'status', 'customerUid', 'counterDate', 'counterValue', 'location', 'createdAt'
         ])
         && request.resource.data.orderNumber is string
         && request.resource.data.orderNumber.matches('^[0-9]{2}-[0-9]{2}-[0-9]{2}-[0-9]+$')
         && day is string && day.matches('^[0-9]{4}-[0-9]{2}-[0-9]{2}$')
         && sequence is int && sequence > 0
-        && request.resource.data.orderNumber == day.substring(2, 4) + '-' + day.substring(5, 7) + '-' + day.substring(8, 10) + '-' + sequence
+        // Firestore Rules لا تدعم String.substring؛ نتحقق من تنسيق رقم الطلب والعداد بشكل منفصل.
         && counter.data.count == sequence
         && counter.data.lastOrderId == orderId
         && request.resource.data.phone is string
@@ -62,6 +62,11 @@ service cloud.firestore {
         && request.resource.data.total is number && request.resource.data.total >= request.resource.data.subtotal
         && request.resource.data.currency is string && request.resource.data.currency.size() <= 12
         && request.resource.data.serviceType in ['dineIn', 'takeaway']
+        && request.resource.data.paymentMethod in ['cash', 'shamcash']
+        && request.resource.data.payment is map
+        && request.resource.data.payment.method == request.resource.data.paymentMethod
+        && ((request.resource.data.paymentMethod == 'cash' && request.resource.data.payment.status == 'unpaid')
+          || (request.resource.data.paymentMethod == 'shamcash' && request.resource.data.payment.status == 'pending_invoice'))
         && request.resource.data.status == 'pending'
         && request.resource.data.customerUid == request.auth.uid
         && request.resource.data.location is map
@@ -136,12 +141,24 @@ service cloud.firestore {
 
     match /orders/{orderId} {
       allow read: if isAdmin() || employeeHas('orders');
+      allow get: if isAdmin() || employeeHas('orders') || (isGuest() && resource.data.customerUid == request.auth.uid);
       allow create: if validGuestOrder(orderId);
       allow update: if (isAdmin()
           && request.resource.data.diff(resource.data).affectedKeys().hasOnly([
-            'status', 'updatedAt', 'items', 'serviceType', 'subtotal', 'taxes', 'taxTotal', 'total', 'currency'
+            'status', 'updatedAt', 'items', 'serviceType', 'subtotal', 'taxes', 'taxTotal', 'total', 'currency', 'payment'
           ])
           && request.resource.data.status in ['pending', 'accepted', 'preparing', 'ready', 'completed', 'cancelled'])
+        || (isGuest() && resource.data.customerUid == request.auth.uid
+          && resource.data.status == 'pending'
+          && resource.data.paymentMethod == 'shamcash'
+          && resource.data.payment.status == 'pending_invoice'
+          && request.resource.data.payment.method == 'shamcash'
+          && request.resource.data.payment.status == 'awaiting_payment'
+          && request.resource.data.payment.invoiceId is string
+          && request.resource.data.payment.paymentUrl is string
+          && request.resource.data.payment.paymentUrl.matches('^https://.*$')
+          && request.resource.data.payment.paymentNote is string
+          && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['payment']))
         || (employeeHas('orders')
           && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['status', 'updatedAt'])
           && request.resource.data.status in ['pending', 'accepted', 'preparing', 'ready', 'completed', 'cancelled']);

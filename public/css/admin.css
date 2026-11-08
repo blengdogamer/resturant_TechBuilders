@@ -91,3 +91,38 @@
   .order-edit-row .remove-tax-button{grid-column:1/-1}
   .order-add-row{flex-direction:column;align-items:stretch}
 }
+
+
+/* v5: invoice printing, ShamCash settings and payment labels */
+.shamcash-settings-heading{margin-top:20px;padding-top:18px;border-top:1px solid var(--line)}
+.shamcash-settings-box{padding:14px;background:#0e1722;border:1px solid #2c3a4c;border-radius:11px;margin:10px 0 20px}
+.shamcash-toggle-row{display:flex!important;align-items:flex-start;gap:10px;margin:0 0 13px!important}
+.shamcash-toggle-row>input{width:18px!important;height:18px!important;margin-top:2px;accent-color:var(--blue)}
+.shamcash-toggle-row span{display:flex;flex-direction:column;gap:5px}
+.shamcash-toggle-row b{font-size:11px}.shamcash-toggle-row small{font-size:9px;color:#95a4b6;line-height:1.7}
+.payment-status-line{display:block;margin-top:5px;font-size:9px;color:#93a4b8;font-weight:400}
+#invoicePrintRoot{display:none}
+@media print{
+  @page{size:auto;margin:12mm}
+  html,body{background:#fff!important;color:#111!important;min-height:0!important}
+  body *{visibility:hidden!important}
+  #invoicePrintRoot,#invoicePrintRoot *{visibility:visible!important}
+  #invoicePrintRoot{display:block!important;position:absolute!important;inset:0!important;width:100%!important;background:#fff!important;color:#111!important;font-family:Arial,Tahoma,sans-serif!important}
+  .receipt-sheet{width:100%;max-width:760px;margin:0 auto;padding:0;color:#171717;background:#fff;direction:rtl;font-family:Arial,Tahoma,sans-serif}
+  .receipt-header{display:flex;align-items:center;justify-content:center;gap:14px;padding:0 0 16px;border-bottom:2px solid #222;text-align:center}
+  .receipt-logo{width:64px;height:64px;object-fit:contain;border-radius:8px}
+  .receipt-header h1{font-size:23px;margin:0 0 5px}.receipt-header p{font-size:13px;margin:0;color:#555}
+  .receipt-meta{display:grid;grid-template-columns:1fr 1fr;gap:9px 18px;padding:15px 0;border-bottom:1px solid #bbb}
+  .receipt-meta div{display:flex;flex-direction:column;gap:3px}.receipt-meta span{font-size:10px;color:#666}.receipt-meta b{font-size:12px}
+  .receipt-items{width:100%;border-collapse:collapse;margin:15px 0;font-size:11px}
+  .receipt-items th{background:#eee!important;-webkit-print-color-adjust:exact;print-color-adjust:exact;font-weight:700}
+  .receipt-items th,.receipt-items td{padding:9px 7px;border:1px solid #bbb;text-align:right}
+  .receipt-items th:nth-child(1),.receipt-items td:nth-child(1),.receipt-items th:nth-child(3),.receipt-items td:nth-child(3){text-align:center}
+  .receipt-items small{display:block;color:#555;font-size:9px;margin-top:4px}
+  .receipt-totals{width:min(360px,100%);margin:12px 0 12px auto}
+  .receipt-total-row,.receipt-grand-total{display:flex;justify-content:space-between;gap:12px;padding:7px 0;border-bottom:1px dashed #aaa;font-size:11px}
+  .receipt-grand-total{border-top:2px solid #222;border-bottom:0;margin-top:5px;padding-top:12px;font-size:16px;font-weight:800}
+  .receipt-payment-ref{text-align:right;font-size:10px}
+  .receipt-footer{display:flex;flex-direction:column;align-items:center;gap:5px;margin-top:26px;padding-top:13px;border-top:1px dashed #999;text-align:center}
+  .receipt-footer b{font-size:14px}.receipt-footer span{font-size:10px}.receipt-footer small{font-size:8px;color:#777;margin-top:8px}
+}

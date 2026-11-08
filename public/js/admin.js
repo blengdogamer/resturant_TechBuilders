@@ -1,4 +1,5 @@
 import { auth, db, sdk, isFirebaseConfigured, createEmployeeAuthAccount } from './firebase.js';
+import { firebaseConfig } from './firebase-config.js';
 
 const $ = selector => document.querySelector(selector);
 let currentAdmin = null;
@@ -258,6 +259,101 @@ function formatDate(value) {
   } catch { return 'وقت غير متاح'; }
 }
 
+function paymentStatusLabel(payment = {}) {
+  const labels = {
+    unpaid: 'الدفع عند الاستلام', pending_invoice: 'بانتظار إصدار الفاتورة',
+    awaiting_payment: 'بانتظار الدفع', paid: 'مدفوع شام كاش', partial: 'دفعة ناقصة',
+    expired: 'انتهت الفاتورة', pending: 'بانتظار الدفع', cancelled: 'ملغاة'
+  };
+  return labels[payment.status] || (payment.method === 'shamcash' ? 'شام كاش' : 'الدفع عند الاستلام');
+}
+
+function invoicePrintHtml(order) {
+  const restaurantName = escapeHtml(restaurantSettings.name || 'المطعم');
+  const logoUrl = String(restaurantSettings.logoUrl || '').trim();
+  const logo = logoUrl && /^https:\/\//i.test(logoUrl) ? `<img class="receipt-logo" src="${escapeHtml(logoUrl)}" alt="">` : '';
+  const currency = order.currency || restaurantSettings.currency || 'ل.س';
+  const rows = (order.items || []).map((item, index) => `
+    <tr><td class="receipt-number">${index + 1}</td><td><b>${escapeHtml(item.name || 'صنف')}</b>${item.note ? `<small>${escapeHtml(item.note)}</small>` : ''}</td><td>${Number(item.quantity || 0)}</td><td>${money(item.unitPrice ?? (Number(item.subtotal || 0) / Math.max(1, Number(item.quantity || 1))), currency)}</td><td>${money(item.subtotal, currency)}</td></tr>`).join('');
+  const taxes = Array.isArray(order.taxes) ? order.taxes : [];
+  const computedSubtotal = (order.items || []).reduce((sum, item) => sum + Number(item.subtotal ?? (Number(item.unitPrice || 0) * Number(item.quantity || 1))), 0);
+  const subtotal = Number.isFinite(Number(order.subtotal)) ? Number(order.subtotal) : computedSubtotal;
+  const computedTaxTotal = taxes.reduce((sum, tax) => sum + Number(tax.amount || 0), 0);
+  const taxTotal = Number.isFinite(Number(order.taxTotal)) ? Number(order.taxTotal) : computedTaxTotal;
+  const grandTotal = Number.isFinite(Number(order.total)) ? Number(order.total) : subtotal + taxTotal;
+  const taxLines = taxes.map(tax => `<div class="receipt-total-row"><span>${escapeHtml(tax.name || 'ضريبة')} ${Number(tax.rate || 0)}%</span><b>${money(tax.amount, currency)}</b></div>`).join('');
+  const paymentText = paymentStatusLabel(order.payment || {});
+  const serviceText = order.serviceType === 'takeaway' ? 'سفري' : 'محلي داخل المطعم';
+  return `<section class="receipt-sheet" dir="rtl">
+    <header class="receipt-header">${logo}<div><h1>${restaurantName}</h1><p>فاتورة مبيعات</p></div></header>
+    <div class="receipt-meta"><div><span>رقم الفاتورة</span><b>${escapeHtml(order.orderNumber || order.id)}</b></div><div><span>التاريخ</span><b>${escapeHtml(formatDate(order.createdAt))}</b></div><div><span>العميل</span><b>${escapeHtml(order.phone || '—')}</b></div><div><span>نوع الطلب</span><b>${serviceText}</b></div><div><span>طريقة الدفع</span><b>${escapeHtml(paymentText)}</b></div></div>
+    <table class="receipt-items"><thead><tr><th>#</th><th>الصنف</th><th>الكمية</th><th>سعر الوحدة</th><th>الإجمالي</th></tr></thead><tbody>${rows || '<tr><td colspan="5">لا توجد أصناف</td></tr>'}</tbody></table>
+    <div class="receipt-totals"><div class="receipt-total-row"><span>المجموع الفرعي</span><b>${money(subtotal, currency)}</b></div>${taxLines}<div class="receipt-total-row"><span>إجمالي الضرائب والرسوم</span><b>${money(taxTotal, currency)}</b></div><div class="receipt-grand-total"><span>الإجمالي النهائي</span><b>${money(grandTotal, currency)}</b></div></div>
+    ${order.payment?.transactionId ? `<p class="receipt-payment-ref">رقم عملية شام كاش: ${escapeHtml(order.payment.transactionId)}</p>` : ''}
+    <footer class="receipt-footer"><b>شكرًا لزيارتكم</b><span>${escapeHtml(restaurantSettings.footerMessage || 'نتمنى لكم تجربة لذيذة')}</span><small>تم إصدار الفاتورة إلكترونيًا بواسطة نظام المطعم</small></footer>
+  </section>`;
+}
+
+function printOrderInvoice(order) {
+  if (!order) return;
+  const root = $('#invoicePrintRoot');
+  root.innerHTML = invoicePrintHtml(order);
+  root.setAttribute('aria-hidden', 'false');
+  const finish = () => { root.innerHTML = ''; root.setAttribute('aria-hidden', 'true'); window.removeEventListener('afterprint', finish); };
+  window.addEventListener('afterprint', finish, { once: true });
+  window.print();
+  setTimeout(finish, 60000);
+}
+
+async function callShamcashEndpoint(endpoint, payload) {
+  const token = await auth.currentUser.getIdToken();
+  const response = await fetch(endpoint, {
+    method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+    body: JSON.stringify({ ...payload, projectId: firebaseConfig.projectId })
+  });
+  const result = await response.json().catch(() => ({}));
+  if (!response.ok || result.ok !== true) throw new Error(result.error || 'تعذر الاتصال بخدمة شام كاش.');
+  return result;
+}
+
+async function issueInvoiceForOrder(order, archive = false) {
+  if (!order || order.payment?.method !== 'shamcash') return;
+  try {
+    const result = await callShamcashEndpoint('/api/shamcash/create-invoice', {
+      orderId: order.id, orderNumber: order.orderNumber, amount: order.total, currency: order.currency
+    });
+    const payment = {
+      method: 'shamcash', status: 'awaiting_payment', invoiceId: result.invoice.invoiceId,
+      paymentUrl: result.invoice.paymentUrl, paymentNote: result.invoice.paymentNote || order.orderNumber,
+      expiresAt: result.invoice.expiresAt || null, createdAt: sdk.serverTimestamp()
+    };
+    const collection = archive ? 'orderArchive' : 'orders';
+    await sdk.updateDoc(sdk.doc(db, collection, order.id), { payment });
+    order.payment = payment;
+    if (archive) renderArchive(); else renderOrders();
+    showToast('تم إنشاء فاتورة شام كاش.');
+  } catch (error) {
+    console.error(error); showToast(error.message || 'تعذر إصدار الفاتورة.', 6000);
+  }
+}
+
+async function verifyShamcashPayment(order, archive = false) {
+  if (!order?.payment?.invoiceId) return;
+  try {
+    const result = await callShamcashEndpoint('/api/shamcash/invoice-status', {
+      orderId: order.id, invoiceId: order.payment.invoiceId, orderNumber: order.orderNumber
+    });
+    const payment = { ...order.payment, ...result.payment, checkedAt: sdk.serverTimestamp() };
+    const collection = archive ? 'orderArchive' : 'orders';
+    await sdk.updateDoc(sdk.doc(db, collection, order.id), { payment });
+    order.payment = payment;
+    if (archive) renderArchive(); else renderOrders();
+    showToast(`حالة دفع شام كاش: ${paymentStatusLabel(payment)}`);
+  } catch (error) {
+    console.error(error); showToast(error.message || 'تعذر التحقق من الدفع.', 6000);
+  }
+}
+
 function renderOrders() {
   const selectedStatus = $('#orderFilter').value || 'all';
   const rows = orders.filter(order => order.status !== 'completed' && (selectedStatus === 'all' || order.status === selectedStatus));
@@ -265,7 +361,7 @@ function renderOrders() {
     <article class="order-card">
       <div class="order-head"><div><div class="order-id">${escapeHtml(order.orderNumber || order.id)}</div><div class="order-time">${formatDate(order.createdAt)} · ${order.serviceType === 'takeaway' ? 'سفري' : 'محلي'}</div></div><div class="order-phone">${escapeHtml(order.phone || '')}</div></div>
       <div class="order-items">${(order.items || []).map(item => `<div class="order-item-line"><span>${escapeHtml(item.name)} × ${Number(item.quantity || 0)}${item.note ? `<small class="order-item-note">ملاحظة: ${escapeHtml(item.note)}</small>` : ''}</span><b>${money(item.subtotal, item.currency)}</b></div>`).join('')}</div>
-      <div class="order-bottom"><div class="order-total">الإجمالي: ${money(order.total, order.currency)}</div><div class="order-actions">${currentRole === 'admin' ? `<button class="outline-button small" data-edit-order="${escapeHtml(order.id)}">تعديل الطلب</button>` : ''}<select data-order-status="${escapeHtml(order.id)}" aria-label="حالة الطلب">${Object.entries(statusNames).filter(([value]) => value !== 'completed' || order.status === value).map(([value, label]) => `<option value="${value}" ${order.status === value ? 'selected' : ''}>${label}</option>`).join('')}<option value="completed">مكتمل — نقل للأرشيف</option></select></div></div>
+      <div class="order-bottom"><div class="order-total">الإجمالي: ${money(order.total, order.currency)}<small class="payment-status-line">${escapeHtml(paymentStatusLabel(order.payment || {}))}</small></div><div class="order-actions"><button class="outline-button small" data-print-order="${escapeHtml(order.id)}">طباعة الفاتورة</button>${currentRole === 'admin' && order.payment?.method === 'shamcash' && !order.payment?.invoiceId ? `<button class="outline-button small" data-create-shamcash-invoice="${escapeHtml(order.id)}">إصدار فاتورة شام كاش</button>` : ''}${currentRole === 'admin' && order.payment?.method === 'shamcash' && order.payment?.invoiceId ? `<button class="outline-button small" data-verify-shamcash="${escapeHtml(order.id)}">تحقق من الدفع</button>` : ''}${currentRole === 'admin' ? `<button class="outline-button small" data-edit-order="${escapeHtml(order.id)}">تعديل الطلب</button>` : ''}<select data-order-status="${escapeHtml(order.id)}" aria-label="حالة الطلب">${Object.entries(statusNames).filter(([value]) => value !== 'completed' || order.status === value).map(([value, label]) => `<option value="${value}" ${order.status === value ? 'selected' : ''}>${label}</option>`).join('')}<option value="completed">مكتمل — نقل للأرشيف</option></select></div></div>
     </article>`).join('') : '<div class="empty-list">لا توجد طلبات نشطة في هذه القائمة حاليًا.</div>';
   $('#ordersList').innerHTML = html;
   $('#recentOrders').innerHTML = rows.slice(0, 4).map(order => `
@@ -307,7 +403,7 @@ function renderArchive() {
   const pageRows = filtered.slice((archivePage - 1) * pageSize, archivePage * pageSize);
   $('#archiveList').innerHTML = pageRows.length ? pageRows.map(order => `
     <article class="order-card"><div class="order-head"><div><div class="order-id">${escapeHtml(order.orderNumber || order.id)}</div><div class="order-time">اكتمل: ${formatDate(order.completedAt)} · أُنشئ: ${formatDate(order.createdAt)}</div></div><div class="order-phone">${escapeHtml(order.phone || '')}</div></div>
-    <div class="order-items">${(order.items || []).map(item => `<div class="order-item-line"><span>${escapeHtml(item.name)} × ${Number(item.quantity || 0)}</span><b>${money(item.subtotal, item.currency)}</b></div>`).join('')}</div><div class="order-bottom"><span class="status-pill">مكتمل</span><div class="order-total">${money(order.total, order.currency)}</div></div></article>`).join('') : '<div class="empty-list">لا توجد طلبات مطابقة في الأرشيف.</div>';
+    <div class="order-items">${(order.items || []).map(item => `<div class="order-item-line"><span>${escapeHtml(item.name)} × ${Number(item.quantity || 0)}</span><b>${money(item.subtotal, item.currency)}</b></div>`).join('')}</div><div class="order-bottom"><span class="status-pill">مكتمل · ${escapeHtml(paymentStatusLabel(order.payment || {}))}</span><div class="order-actions"><div class="order-total">${money(order.total, order.currency)}</div><button class="outline-button small" data-print-archive="${escapeHtml(order.id)}">طباعة الفاتورة</button>${currentRole === 'admin' && order.payment?.method === 'shamcash' && order.payment?.invoiceId ? `<button class="outline-button small" data-verify-archive-payment="${escapeHtml(order.id)}">تحقق من الدفع</button>` : ''}</div></div></article>`).join('') : '<div class="empty-list">لا توجد طلبات مطابقة في الأرشيف.</div>';
   $('#archivePageLabel').textContent = `${archivePage} / ${pageCount}`;
   $('#archivePrev').disabled = archivePage <= 1;
   $('#archiveNext').disabled = archivePage >= pageCount;
@@ -361,6 +457,8 @@ function fillSettings() {
   $('#settingRadius').value = restaurantSettings.location?.radius || 100;
   $('#settingTimeZone').value = restaurantSettings.timeZone || 'Asia/Damascus';
   $('#settingLogoUrl').value = restaurantSettings.logoUrl || '';
+  $('#settingShamcashEnabled').checked = restaurantSettings.paymentMethods?.shamcash?.enabled === true;
+  $('#settingShamcashAccountId').value = restaurantSettings.paymentMethods?.shamcash?.accountId || '';
   const theme = restaurantSettings.theme || {};
   $('#themePrimary').value = theme.primary || '#087cf0';
   $('#themeAccent').value = theme.accent || '#42a1ff';
@@ -413,6 +511,17 @@ async function saveSettings(event) {
   if (!Number.isFinite(radius) || radius < 25 || radius > 500) { $('#settingsMessage').textContent = 'نطاق الموقع يجب أن يكون بين 25 و500 متر.'; return; }
   const logoUrl = $('#settingLogoUrl').value.trim();
   if (logoUrl) { try { const url = new URL(logoUrl); if (url.protocol !== 'https:') throw new Error(); } catch { $('#settingsMessage').textContent = 'رابط الشعار يجب أن يكون HTTPS مباشرًا.'; return; } }
+  const paymentMethods = {
+    ...(restaurantSettings.paymentMethods || {}),
+    shamcash: {
+      ...(restaurantSettings.paymentMethods?.shamcash || {}),
+      enabled: $('#settingShamcashEnabled').checked,
+      accountId: $('#settingShamcashAccountId').value.trim()
+    }
+  };
+  if (paymentMethods.shamcash.enabled && !paymentMethods.shamcash.accountId) {
+    $('#settingsMessage').textContent = 'أدخل معرّف حساب الاستقبال قبل تفعيل شام كاش.'; return;
+  }
   const theme = {
     primary: $('#themePrimary').value, accent: $('#themeAccent').value,
     background: $('#themeBackground').value, surface: $('#themeSurface').value,
@@ -439,11 +548,11 @@ async function saveSettings(event) {
   try {
     await sdk.setDoc(sdk.doc(db, 'settings', 'restaurant'), {
       name: $('#settingName').value.trim(), footerMessage: $('#settingFooter').value.trim(),
-      currency: $('#settingCurrency').value.trim() || 'ل.س', logoUrl, theme, taxes, timeZone: $('#settingTimeZone').value,
+      currency: $('#settingCurrency').value.trim() || 'ل.س', logoUrl, theme, taxes, paymentMethods, timeZone: $('#settingTimeZone').value,
       location: { address: $('#settingAddress').value.trim(), lat, lng, radius },
       updatedAt: sdk.serverTimestamp()
     }, { merge: true });
-    restaurantSettings = { ...restaurantSettings, name: $('#settingName').value.trim(), currency: $('#settingCurrency').value.trim(), logoUrl, theme, taxes, timeZone: $('#settingTimeZone').value, location: { address: $('#settingAddress').value.trim(), lat, lng, radius } };
+    restaurantSettings = { ...restaurantSettings, name: $('#settingName').value.trim(), currency: $('#settingCurrency').value.trim(), logoUrl, theme, taxes, paymentMethods, timeZone: $('#settingTimeZone').value, location: { address: $('#settingAddress').value.trim(), lat, lng, radius } };
     applyAdminBranding();
     $('#settingsMessage').textContent = 'تم حفظ إعدادات المطعم.';
     showToast('تم حفظ الإعدادات بنجاح');
@@ -769,8 +878,20 @@ $('#itemsList').addEventListener('click', event => {
   if (remove) deleteEntity('item', remove.dataset.id);
 });
 $('#ordersList').addEventListener('click', event => {
+  const print = event.target.closest('[data-print-order]');
+  if (print) return printOrderInvoice(orders.find(row => row.id === print.dataset.printOrder));
+  const createInvoice = event.target.closest('[data-create-shamcash-invoice]');
+  if (createInvoice) return issueInvoiceForOrder(orders.find(row => row.id === createInvoice.dataset.createShamcashInvoice));
+  const verifyPayment = event.target.closest('[data-verify-shamcash]');
+  if (verifyPayment) return verifyShamcashPayment(orders.find(row => row.id === verifyPayment.dataset.verifyShamcash));
   const edit = event.target.closest('[data-edit-order]');
   if (edit) openOrderEditDialog(orders.find(row => row.id === edit.dataset.editOrder));
+});
+$('#archiveList').addEventListener('click', event => {
+  const print = event.target.closest('[data-print-archive]');
+  if (print) return printOrderInvoice(archiveOrders.find(row => row.id === print.dataset.printArchive));
+  const verifyPayment = event.target.closest('[data-verify-archive-payment]');
+  if (verifyPayment) return verifyShamcashPayment(archiveOrders.find(row => row.id === verifyPayment.dataset.verifyArchivePayment), true);
 });
 $('#ordersList').addEventListener('change', async event => {
   const select = event.target.closest('[data-order-status]');

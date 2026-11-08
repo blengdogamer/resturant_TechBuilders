@@ -1,4 +1,5 @@
 import { guestAuth as auth, guestDb as db, sdk, isFirebaseConfigured } from './firebase.js';
+import { firebaseConfig } from './firebase-config.js';
 import { TELEGRAM_ENDPOINT } from './telegram-config.js';
 
 const $ = selector => document.querySelector(selector);
@@ -6,7 +7,7 @@ const state = {
   groups: [], categories: [], items: [], settings: {},
   groupId: null, categoryId: null, page: 0, selectedItem: null,
   detailQty: 1, detailNote: '', cart: new Map(),
-  verifiedLocation: null, locationVerifiedUntil: 0, serviceType: 'dineIn'
+  verifiedLocation: null, locationVerifiedUntil: 0, serviceType: 'dineIn', paymentMethod: 'cash'
 };
 const PAGE_SIZE = 4;
 
@@ -279,6 +280,38 @@ function updateCartQuantity(id, change) {
   renderCart();
 }
 
+function shamcashEnabled() {
+  const config = state.settings.paymentMethods?.shamcash || {};
+  return config.enabled === true && String(config.accountId || '').trim().length > 0;
+}
+
+function openShamcashPaymentDialog(orderNumber, amount, currency, invoice) {
+  $('#shamcashOrderNumber').textContent = orderNumber;
+  $('#shamcashAmount').textContent = formatMoney(amount, currency);
+  $('#shamcashPaymentNote').textContent = invoice.paymentNote || orderNumber;
+  $('#shamcashPayLink').href = invoice.paymentUrl;
+  $('#shamcashExpiresAt').textContent = invoice.expiresAt
+    ? `تنتهي صلاحية الفاتورة: ${new Date(invoice.expiresAt).toLocaleString('ar-SY')}`
+    : 'أكمل الدفع قبل انتهاء صلاحية الفاتورة.';
+  const dialog = $('#shamcashPaymentDialog');
+  if (typeof dialog.showModal === 'function') dialog.showModal();
+  else window.location.href = invoice.paymentUrl;
+}
+
+async function createShamcashInvoice(orderId, orderNumber, amount, currency) {
+  const user = auth.currentUser;
+  if (!user) throw new Error('انتهت جلسة العميل. أعد التحقق من موقعك وحاول مجددًا.');
+  const token = await user.getIdToken();
+  const response = await fetch('/api/shamcash/create-invoice', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+    body: JSON.stringify({ orderId, orderNumber, amount, currency, projectId: firebaseConfig.projectId })
+  });
+  const result = await response.json().catch(() => ({}));
+  if (!response.ok || result.ok !== true) throw new Error(result.error || 'تعذر إنشاء فاتورة شام كاش.');
+  return result.invoice;
+}
+
 function renderCart() {
   const lines = [...state.cart.values()];
   const count = lines.reduce((sum, line) => sum + line.quantity, 0);
@@ -286,6 +319,15 @@ function renderCart() {
   const breakdown = priceBreakdown(subtotal);
   const currencies = [...new Set(lines.map(line => line.item.currency || 'ل.س'))];
   const currency = currencies.length === 1 ? currencies[0] : '';
+  const shamcashAvailable = shamcashEnabled() && (currency === 'ل.س' || currency === 'SYP');
+  const shamcashButton = $('[data-payment-method=\"shamcash\"]');
+  if (shamcashButton) shamcashButton.hidden = !shamcashAvailable;
+  $('#shamcashPaymentHint').hidden = !shamcashAvailable;
+  if (!shamcashAvailable && state.paymentMethod === 'shamcash') state.paymentMethod = 'cash';
+  document.querySelectorAll('[data-payment-method]').forEach(button => {
+    button.classList.toggle('active', button.dataset.paymentMethod === state.paymentMethod);
+    button.setAttribute('aria-pressed', String(button.dataset.paymentMethod === state.paymentMethod));
+  });
   $('#cartCount').textContent = count;
   $('#cartSubtotal').textContent = formatMoney(subtotal, currency);
   $('#cartTotal').textContent = formatMoney(breakdown.total, currency);
@@ -474,6 +516,8 @@ async function submitOrder() {
       total: breakdown.total,
       currency: currencies[0],
       serviceType: state.serviceType,
+      paymentMethod: state.paymentMethod,
+      payment: { method: state.paymentMethod, status: state.paymentMethod === 'shamcash' ? 'pending_invoice' : 'unpaid' },
       status: 'pending',
       customerUid: auth.currentUser.uid,
       counterDate: dayKey,
@@ -495,6 +539,24 @@ async function submitOrder() {
       return number;
     });
 
+    let shamcashInvoice = null;
+    let shamcashInvoiceError = '';
+    if (state.paymentMethod === 'shamcash') {
+      try {
+        shamcashInvoice = await createShamcashInvoice(orderRef.id, orderNumber, breakdown.total, currencies[0]);
+        await sdk.updateDoc(orderRef, {
+          payment: {
+            method: 'shamcash', status: 'awaiting_payment', invoiceId: shamcashInvoice.invoiceId,
+            paymentUrl: shamcashInvoice.paymentUrl, paymentNote: shamcashInvoice.paymentNote || orderNumber,
+            expiresAt: shamcashInvoice.expiresAt || null, createdAt: sdk.serverTimestamp()
+          }
+        });
+      } catch (error) {
+        console.error('ShamCash invoice creation failed:', error);
+        shamcashInvoiceError = error.message || 'تعذر إنشاء فاتورة شام كاش.';
+      }
+    }
+
     let telegramSent = false;
     let telegramError = '';
     try {
@@ -511,6 +573,7 @@ async function submitOrder() {
           taxTotal: breakdown.taxTotal,
           total: breakdown.total,
           serviceType: state.serviceType,
+          paymentMethod: state.paymentMethod,
           currency: currencies[0],
           location: orderBase.location
         })
@@ -535,9 +598,15 @@ async function submitOrder() {
     $('#gateBoxTitle').textContent = 'تحقق من موقعك';
     $('#gateBoxText').textContent = 'يجب أن تكون داخل نطاق المطعم لإرسال الطلب.';
     $('#verifyEntry').textContent = 'تحقق من موقعي';
-    toast(telegramSent
-      ? `تم تسجيل طلبك ${orderNumber} وإرسال إشعار المطعم بنجاح.`
-      : `تم تسجيل الطلب ${orderNumber}، لكن إشعار Telegram لم يصل. ${telegramError}`, 7000);
+    if (shamcashInvoice) {
+      openShamcashPaymentDialog(orderNumber, breakdown.total, currencies[0], shamcashInvoice);
+    } else if (shamcashInvoiceError) {
+      toast(`تم تسجيل الطلب ${orderNumber} لكن تعذر إصدار فاتورة شام كاش: ${shamcashInvoiceError} تواصل مع المطعم لإتمام الدفع.`, 9000);
+    } else {
+      toast(telegramSent
+        ? `تم تسجيل طلبك ${orderNumber} وإرسال إشعار المطعم بنجاح.`
+        : `تم تسجيل الطلب ${orderNumber}، لكن إشعار Telegram لم يصل. ${telegramError}`, 7000);
+    }
   } catch (error) {
     console.error(error);
     const message = error.code === 'permission-denied'
@@ -611,6 +680,9 @@ $('#bookFrame').addEventListener('touchend', event => {
 
 $('#openCart').addEventListener('click', openCart);
 document.querySelectorAll('[data-service-type]').forEach(button => button.addEventListener('click', () => { state.serviceType = button.dataset.serviceType; renderCart(); }));
+document.querySelectorAll('[data-payment-method]').forEach(button => button.addEventListener('click', () => { state.paymentMethod = button.dataset.paymentMethod; renderCart(); }));
+$('#closeShamcashDialog').addEventListener('click', () => $('#shamcashPaymentDialog').close());
+$('#closeShamcashDialogBottom').addEventListener('click', () => $('#shamcashPaymentDialog').close());
 $('#closeCart').addEventListener('click', closeCart);
 $('#cartBackdrop').addEventListener('click', closeCart);
 $('#verifyEntry').addEventListener('click', verifyEntry);

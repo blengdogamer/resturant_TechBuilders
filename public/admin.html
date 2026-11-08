@@ -126,6 +126,12 @@
             <label>اسم المطعم<input id="settingName" required maxlength="80" value="TECHBUILDERS"></label>
             <label>رسالة أسفل المنيو<textarea id="settingFooter" rows="3" maxlength="250">ننتظركم دائمًا. نتمنى لكم تجربة لذيذة.</textarea></label>
             <label>رابط الشعار الموحد (HTTPS)<input id="settingLogoUrl" type="url" placeholder="https://.../logo.png"><small class="help-note">ضع رابط صورة مباشرًا؛ سيتم استخدامه في واجهة العميل ولوحة الإدارة وأيقونة الموقع.</small></label>
+            <div class="card-heading shamcash-settings-heading"><div><span>SHAM CASH / ONLINE PAYMENT</span><h3>الدفع عبر شام كاش</h3></div></div>
+            <div class="shamcash-settings-box">
+              <label class="shamcash-toggle-row"><input id="settingShamcashEnabled" type="checkbox"><span><b>تفعيل شام كاش للعملاء</b><small>عند الإيقاف يختفي خيار شام كاش من صفحة الطلب دون التأثير على الطلبات القديمة.</small></span></label>
+              <label>معرّف حساب الاستقبال (account_id)<input id="settingShamcashAccountId" maxlength="120" placeholder="acc_..." dir="ltr" autocomplete="off"><small class="help-note">معرّف الحساب المرتبط في منصة ShamCash API، وليس مفتاح API.</small></label>
+              <p class="help-note security-note">مفتاح API لا يوضع هنا ولا في Firebase. أضفه في Cloudflare Pages كـ Secret باسم SHAMCASH_API_TOKEN.</p>
+            </div>
             <div class="card-heading theme-heading"><div><span>BRAND COLORS</span><h3>ألوان الواجهة</h3></div></div>
             <div class="theme-color-grid">
               <label>اللون الأساسي<input id="themePrimary" type="color" value="#087cf0"></label>
@@ -165,7 +171,8 @@
         </div>
       </section>
 
-      <div class="admin-toast" id="adminToast" role="status"></div>
+      <div id="invoicePrintRoot" aria-hidden="true"></div>
+  <div class="admin-toast" id="adminToast" role="status"></div>
     </main>
   </div>
 
