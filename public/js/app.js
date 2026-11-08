@@ -498,8 +498,8 @@ async function monitorShamcashPayment(orderRef, orderId, orderNumber, invoice, o
         return;
       }
       if (payment.status === 'expired' || payment.status === 'cancelled') {
-        await sdk.updateDoc(orderRef, { payment: { method: 'shamcash', ...payment, invoiceId: invoice.invoiceId, paymentUrl: invoice.paymentUrl, paymentNote: invoice.paymentNote || orderNumber } });
-        if (statusNode) statusNode.textContent = payment.status === 'expired' ? 'انتهت صلاحية الفاتورة. تواصل مع المطعم.' : 'تم إلغاء الفاتورة.';
+        await sdk.deleteDoc(orderRef);
+        if (statusNode) statusNode.textContent = payment.status === 'expired' ? 'انتهت الفاتورة ولم يتم تسجيل الطلب.' : 'تم إلغاء الفاتورة ولم يتم تسجيل الطلب.';
         activeShamcashPolls.delete(orderId);
         return;
       }
@@ -622,6 +622,7 @@ async function submitOrder() {
       } catch (error) {
         console.error('ShamCash invoice creation failed:', error);
         shamcashInvoiceError = error.message || 'تعذر إنشاء فاتورة شام كاش.';
+        await sdk.deleteDoc(orderRef).catch(deleteError => console.error('Could not remove unpaid checkout draft:', deleteError));
       }
     }
 
