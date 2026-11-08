@@ -162,9 +162,15 @@ service cloud.firestore {
         || (employeeHas('orders')
           && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['status', 'updatedAt'])
           && request.resource.data.status in ['pending', 'accepted', 'preparing', 'ready', 'completed', 'cancelled']);
-      allow delete: if isAdmin() || (employeeHas('orders')
-        && getAfter(/databases/$(database)/documents/orderArchive/$(orderId)).data.status == 'completed'
-        && getAfter(/databases/$(database)/documents/orderArchive/$(orderId)).data.orderNumber == resource.data.orderNumber);
+      allow delete: if isAdmin()
+        || (isGuest()
+          && resource.data.customerUid == request.auth.uid
+          && resource.data.status == 'pending'
+          && resource.data.payment.method == 'shamcash'
+          && resource.data.payment.status in ['pending_invoice', 'awaiting_payment', 'expired', 'cancelled'])
+        || (employeeHas('orders')
+          && getAfter(/databases/$(database)/documents/orderArchive/$(orderId)).data.status == 'completed'
+          && getAfter(/databases/$(database)/documents/orderArchive/$(orderId)).data.orderNumber == resource.data.orderNumber);
     }
 
     match /orderArchive/{orderId} {
