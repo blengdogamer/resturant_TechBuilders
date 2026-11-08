@@ -10,6 +10,7 @@ const state = {
   verifiedLocation: null, locationVerifiedUntil: 0, serviceType: 'dineIn', paymentMethod: 'cash'
 };
 const PAGE_SIZE = 4;
+const activeShamcashPolls = new Set();
 
 const escapeHtml = value => String(value ?? '').replace(/[&<>"']/g, char => ({
   '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'
@@ -449,6 +450,73 @@ async function verifyEntry() {
   }
 }
 
+async function notifyPaidShamcashOrder(orderNumber, phone, lines, breakdown, currency, location) {
+  try {
+    const response = await fetch(TELEGRAM_ENDPOINT, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        orderNumber, restaurantName: state.settings.name || 'TechBuilders', phone,
+        items: lines, subtotal: breakdown.subtotal, taxes: breakdown.taxes,
+        taxTotal: breakdown.taxTotal, total: breakdown.total,
+        serviceType: state.serviceType, paymentMethod: 'shamcash', currency, location
+      })
+    });
+    const result = await response.json().catch(() => ({}));
+    if (!response.ok || result.ok !== true) console.error('Paid ShamCash order Telegram notification failed:', result.error);
+  } catch (error) {
+    console.error('Paid ShamCash order Telegram notification failed:', error);
+  }
+}
+
+async function monitorShamcashPayment(orderRef, orderId, orderNumber, invoice, orderData) {
+  if (activeShamcashPolls.has(orderId)) return;
+  activeShamcashPolls.add(orderId);
+  const statusNode = $('#shamcashExpiresAt');
+  const startedAt = Date.now();
+  const check = async () => {
+    try {
+      const user = auth.currentUser;
+      if (!user) throw new Error('انتهت جلسة التحقق من الدفع.');
+      const token = await user.getIdToken();
+      const response = await fetch('/api/shamcash/invoice-status', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ orderId, orderNumber, invoiceId: invoice.invoiceId, projectId: firebaseConfig.projectId })
+      });
+      const result = await response.json().catch(() => ({}));
+      if (!response.ok || result.ok !== true) throw new Error(result.error || 'تعذر التحقق من حالة الدفع.');
+      const payment = result.payment || {};
+      if (payment.status === 'paid') {
+        await sdk.updateDoc(orderRef, { payment: { method: 'shamcash', ...payment, invoiceId: invoice.invoiceId, paymentUrl: invoice.paymentUrl, paymentNote: invoice.paymentNote || orderNumber, paidAt: payment.paidAt || sdk.serverTimestamp() } });
+        if (statusNode) statusNode.textContent = 'تم تأكيد الدفع بنجاح. وصل طلبك إلى المطعم.';
+        await notifyPaidShamcashOrder(orderNumber, orderData.phone, orderData.items, {
+          subtotal: orderData.subtotal, taxes: orderData.taxes, taxTotal: orderData.taxTotal, total: orderData.total
+        }, orderData.currency, orderData.location);
+        activeShamcashPolls.delete(orderId);
+        toast(`تم تأكيد الدفع بنجاح، وصل طلبك ${orderNumber} إلى المطعم.`, 8000);
+        return;
+      }
+      if (payment.status === 'expired' || payment.status === 'cancelled') {
+        await sdk.updateDoc(orderRef, { payment: { method: 'shamcash', ...payment, invoiceId: invoice.invoiceId, paymentUrl: invoice.paymentUrl, paymentNote: invoice.paymentNote || orderNumber } });
+        if (statusNode) statusNode.textContent = payment.status === 'expired' ? 'انتهت صلاحية الفاتورة. تواصل مع المطعم.' : 'تم إلغاء الفاتورة.';
+        activeShamcashPolls.delete(orderId);
+        return;
+      }
+      if (statusNode) statusNode.textContent = 'بانتظار تأكيد شام كاش للدفع… يتم التحقق تلقائيًا.';
+    } catch (error) {
+      console.warn('ShamCash payment status check:', error);
+      if (statusNode) statusNode.textContent = 'بانتظار تأكيد الدفع. سيستمر التحقق تلقائيًا.';
+    }
+    if (Date.now() - startedAt < 30 * 60 * 1000) setTimeout(check, 5000);
+    else {
+      if (statusNode) statusNode.textContent = 'توقف التحقق التلقائي. تواصل مع المطعم للتأكد من حالة الدفع.';
+      activeShamcashPolls.delete(orderId);
+    }
+  };
+  setTimeout(check, 2500);
+}
+
 function normalizePhoneDigits(value) {
   return String(value || '')
     .replace(/[٠-٩]/g, digit => String('٠١٢٣٤٥٦٧٨٩'.indexOf(digit)))
@@ -559,30 +627,25 @@ async function submitOrder() {
 
     let telegramSent = false;
     let telegramError = '';
-    try {
-      const response = await fetch(TELEGRAM_ENDPOINT, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          orderNumber,
-          restaurantName: state.settings.name || 'TechBuilders',
-          phone,
-          items: lines,
-          subtotal: breakdown.subtotal,
-          taxes: breakdown.taxes,
-          taxTotal: breakdown.taxTotal,
-          total: breakdown.total,
-          serviceType: state.serviceType,
-          paymentMethod: state.paymentMethod,
-          currency: currencies[0],
-          location: orderBase.location
-        })
-      });
-      const result = await response.json().catch(() => ({}));
-      telegramSent = response.ok && result.ok === true;
-      if (!telegramSent) telegramError = result.error || 'تعذر إرسال إشعار Telegram.';
-    } catch (error) {
-      telegramError = error.message || 'تعذر الاتصال بخدمة إشعارات Telegram.';
+    if (state.paymentMethod !== 'shamcash') {
+      try {
+        const response = await fetch(TELEGRAM_ENDPOINT, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            orderNumber, restaurantName: state.settings.name || 'TechBuilders', phone,
+            items: lines, subtotal: breakdown.subtotal, taxes: breakdown.taxes,
+            taxTotal: breakdown.taxTotal, total: breakdown.total,
+            serviceType: state.serviceType, paymentMethod: state.paymentMethod,
+            currency: currencies[0], location: orderBase.location
+          })
+        });
+        const result = await response.json().catch(() => ({}));
+        telegramSent = response.ok && result.ok === true;
+        if (!telegramSent) telegramError = result.error || 'تعذر إرسال إشعار Telegram.';
+      } catch (error) {
+        telegramError = error.message || 'تعذر الاتصال بخدمة إشعارات Telegram.';
+      }
     }
 
     state.cart.clear();
@@ -600,8 +663,12 @@ async function submitOrder() {
     $('#verifyEntry').textContent = 'تحقق من موقعي';
     if (shamcashInvoice) {
       openShamcashPaymentDialog(orderNumber, breakdown.total, currencies[0], shamcashInvoice);
+      monitorShamcashPayment(orderRef, orderRef.id, orderNumber, shamcashInvoice, {
+        phone, items: lines, subtotal: breakdown.subtotal, taxes: breakdown.taxes,
+        taxTotal: breakdown.taxTotal, total: breakdown.total, currency: currencies[0], location: orderBase.location
+      });
     } else if (shamcashInvoiceError) {
-      toast(`تم تسجيل الطلب ${orderNumber} لكن تعذر إصدار فاتورة شام كاش: ${shamcashInvoiceError} تواصل مع المطعم لإتمام الدفع.`, 9000);
+      toast(`لم يتم تأكيد طلبك لأن فاتورة شام كاش لم تُنشأ: ${shamcashInvoiceError}`, 9000);
     } else {
       toast(telegramSent
         ? `تم تسجيل طلبك ${orderNumber} وإرسال إشعار المطعم بنجاح.`
