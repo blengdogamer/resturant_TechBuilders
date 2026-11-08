@@ -136,3 +136,52 @@
 .payment-invoice-number small{font-size:10px;color:#8d9caf}.payment-invoice-number b{font-size:12px;direction:ltr}
 .payment-link-button{display:flex;align-items:center;justify-content:center;margin:16px 0 8px;min-height:49px}
 .payment-dialog-content .payment-dialog-footnote{font-size:9px;color:#8392a5}.payment-dialog-content .outline-button{margin-top:9px}
+
+
+/* Mobile cart drawer: keep checkout usable on short phone screens */
+@media (max-width: 780px) {
+  .cart-drawer {
+    height: 94vh;
+    height: 94dvh;
+    max-height: 900px;
+    min-height: 0;
+    overflow: hidden;
+    display: flex;
+    flex-direction: column;
+    padding-bottom: calc(10px + env(safe-area-inset-bottom));
+  }
+
+  .drawer-head {
+    flex: 0 0 auto;
+  }
+
+  .cart-lines {
+    flex: 1 1 0;
+    min-height: 0;
+    overflow-x: hidden;
+    overflow-y: auto;
+    -webkit-overflow-scrolling: touch;
+  }
+
+  .cart-checkout {
+    flex: 0 1 auto;
+    min-height: 0;
+    max-height: 68%;
+    overflow-x: hidden;
+    overflow-y: auto;
+    overscroll-behavior: contain;
+    -webkit-overflow-scrolling: touch;
+    padding-top: 10px;
+    padding-bottom: 4px;
+  }
+
+  .send-order-btn:not(.payment-link-button) {
+    position: sticky;
+    bottom: 0;
+    z-index: 2;
+    flex: 0 0 auto;
+    min-height: 52px;
+    margin-top: 8px;
+    box-shadow: 0 -8px 18px rgba(16, 23, 32, .92);
+  }
+}
